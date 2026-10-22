@@ -13,6 +13,28 @@ import type { SwingMetrics } from "../lib/engine.ts";
 import { kinematicSequenceReport } from "../lib/engine.ts";
 import { jointAngle3dDeg, savgolSmooth, type Vec3 } from "../lib/vectorMath.ts";
 
+/**
+ * Borderline-fault grace band.
+ *
+ * Thresholds are hard lines, but a measurement half an inch past tolerance is
+ * inside the noise floor of single-camera pose estimation, and flagging it
+ * reads as nitpicking to the golfer. A fault is only reported once it clears
+ * tolerance by a margin that scales with the unit: generous in inches, tight
+ * in degrees, and never applied to categorical rules (sequence order) where
+ * "slightly wrong" is not a meaningful idea.
+ */
+function graceFor(unit: string, target: number): number {
+  if (unit === "in") return Math.max(0.5, target * 0.06);
+  if (unit === "deg") return Math.max(2.5, target * 0.03);
+  if (unit === "%") return 1.5;
+  return 0;
+}
+
+function clearsGrace(f: Fault): boolean {
+  if (f.unit === "order" || f.target === 0) return true; // categorical rule
+  return f.measured > f.target + graceFor(f.unit, f.target);
+}
+
 const PLAYER_HEIGHT_IN = 70;
 const IN = 1 / PLAYER_HEIGHT_IN;
 
@@ -307,9 +329,10 @@ export function detectFaults18(
   }
 
   const sevOrder: Record<string, number> = { critical: 0, major: 1, minor: 2 };
-  faults.sort((a, b) => (sevOrder[a.severity] ?? 9) - (sevOrder[b.severity] ?? 9));
+  const reported = faults.filter(clearsGrace);
+  reported.sort((a, b) => (sevOrder[a.severity] ?? 9) - (sevOrder[b.severity] ?? 9));
   void T;
-  return faults;
+  return reported;
 }
 
 /** Body-group label for a fault code (used by the diagnostics UI). */

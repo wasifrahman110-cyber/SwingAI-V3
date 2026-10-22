@@ -49,6 +49,9 @@ export interface SwingCanvasProps {
   multiView: boolean;
   dtl: SwingSequence | null;
   dtlVideo: HTMLVideoElement | null;
+  /** Phase-aligned DTL frame index, computed by the screen so the same value
+   *  drives both this canvas and the DTL <video> element. */
+  dtlFrame?: number | null;
   onFrameChange: (frame: number) => void;
   onTogglePlay: () => void;
 }
@@ -85,6 +88,57 @@ export function mappedReferenceFrame(
   return Math.max(0, Math.min(refLength - 1, base + offset));
 }
 
+/**
+ * The rect a video actually occupies inside a pane, letterboxed to preserve
+ * its aspect ratio. Pose landmarks are normalized to the SOURCE video frame,
+ * so the skeleton has to be drawn into this rect rather than the whole pane;
+ * otherwise the overlay drifts off the golfer as soon as the pane aspect
+ * stops matching the clip's.
+ */
+function mediaPane(pane: Pane, video: HTMLVideoElement | null): Pane {
+  if (!video || video.readyState < 2) return pane;
+  const vw = video.videoWidth || 0;
+  const vh = video.videoHeight || 0;
+  if (vw <= 0 || vh <= 0) return pane;
+  const scale = Math.min(pane.w / vw, pane.h / vh);
+  const dw = vw * scale;
+  const dh = vh * scale;
+  return { x: pane.x + (pane.w - dw) / 2, y: pane.y + (pane.h - dh) / 2, w: dw, h: dh };
+}
+
+/**
+ * Map a frame of one clip onto another clip filmed at a different tempo by
+ * interpolating between the five detected phase keyframes. Used to hold the
+ * face-on and down-the-line clips at the same point of the swing.
+ */
+export function phaseAlignedFrame(
+  fi: number,
+  from: Record<string, number>,
+  to: Record<string, number>,
+  toLen: number,
+): number {
+  const keys = ["setup", "top_of_backswing", "downswing", "impact", "follow_through"];
+  const pairs = keys
+    .map((k) => [from[k], to[k]] as const)
+    .filter((kv): kv is readonly [number, number] => kv[0] != null && kv[1] != null)
+    .sort((a, b) => a[0] - b[0]);
+  if (pairs.length < 2) return Math.max(0, Math.min(toLen - 1, fi));
+  const first = pairs[0] as readonly [number, number];
+  const last = pairs[pairs.length - 1] as readonly [number, number];
+  if (fi <= first[0]) return Math.max(0, Math.min(toLen - 1, first[1]));
+  if (fi >= last[0]) return Math.max(0, Math.min(toLen - 1, last[1]));
+  for (let i = 1; i < pairs.length; i++) {
+    const a = pairs[i - 1] as readonly [number, number];
+    const b = pairs[i] as readonly [number, number];
+    if (fi <= b[0]) {
+      const span = b[0] - a[0] || 1;
+      const t = (fi - a[0]) / span;
+      return Math.max(0, Math.min(toLen - 1, Math.round(a[1] + t * (b[1] - a[1]))));
+    }
+  }
+  return Math.max(0, Math.min(toLen - 1, last[1]));
+}
+
 function drawBackdrop(
   ctx: CanvasRenderingContext2D,
   pane: Pane,
@@ -94,11 +148,15 @@ function drawBackdrop(
   if (video && video.readyState >= 2) {
     const vw = video.videoWidth || 16;
     const vh = video.videoHeight || 9;
-    const scale = Math.max(pane.w / vw, pane.h / vh);
+    // contain, not cover: cropping would push the golfer out of frame in the
+    // taller viewport and desync the skeleton from the footage
+    const scale = Math.min(pane.w / vw, pane.h / vh);
     ctx.save();
     ctx.beginPath();
     ctx.rect(pane.x, pane.y, pane.w, pane.h);
     ctx.clip();
+    ctx.fillStyle = "#000";
+    ctx.fillRect(pane.x, pane.y, pane.w, pane.h);
     ctx.drawImage(
       video,
       pane.x + (pane.w - vw * scale) / 2,
@@ -232,6 +290,8 @@ export function SwingCanvas(props: SwingCanvasProps) {
       : { x: 0, y: 0, w, h };
 
     drawBackdrop(ctx, userPane, p.video, 0);
+    // everything pose-derived is drawn into the video's own letterboxed rect
+    const userDraw = mediaPane(userPane, p.video);
 
     // deviation lookup (dual only — solo has no reference to deviate from)
     let flagged: ReadonlySet<number> = new Set();
@@ -256,8 +316,8 @@ export function SwingCanvas(props: SwingCanvasProps) {
       const a = user.frames[t - 1];
       const b = user.frames[t];
       if (!a || !b) continue;
-      const pa = project(a, WRIST, userPane);
-      const pb = project(b, WRIST, userPane);
+      const pa = project(a, WRIST, userDraw);
+      const pb = project(b, WRIST, userDraw);
       const alpha = ((t - trailStart) / (fi - trailStart || 1)) * 0.85;
       ctx.strokeStyle = `rgba(163,194,147,${alpha.toFixed(3)})`;
       ctx.beginPath();
@@ -276,8 +336,13 @@ export function SwingCanvas(props: SwingCanvasProps) {
           : mappedReferenceFrame(analysis, fi, p.frameOffset, reference.frames.length);
       const refF = reference.frames[refFi];
       if (p.ghostOn && refF) {
-        const xf = ghostTransform(userF, refF, userPane);
+        const xf = ghostTransform(userF, refF, userDraw);
         ctx.save();
+        // Clip to the pane: the ghost is scaled from the reference skeleton and
+        // can otherwise extend past the frame edges in split view.
+        ctx.beginPath();
+        ctx.rect(userDraw.x, userDraw.y, userDraw.w, userDraw.h);
+        ctx.clip();
         ctx.globalAlpha = p.ghostOpacity;
         ctx.strokeStyle = "#f5f5f7";
         ctx.lineWidth = BONE_W;
@@ -298,18 +363,19 @@ export function SwingCanvas(props: SwingCanvasProps) {
       }
     }
 
-    drawSkeleton(ctx, userF, userPane, ACCENT, flagged, severe);
+    drawSkeleton(ctx, userF, userDraw, ACCENT, flagged, severe);
 
     // reference pane (right half)
     if (dual && reference) {
       const refPane: Pane = { x: w / 2 + 1, y: 0, w: w / 2 - 1, h };
       drawBackdrop(ctx, refPane, p.referenceVideo, 13);
+      const refDraw = mediaPane(refPane, p.referenceVideo);
       const refF = reference.frames[refFi];
-      if (refF) drawSkeleton(ctx, refF, refPane, REF_COLOR, new Set(), false);
+      if (refF) drawSkeleton(ctx, refF, refDraw, REF_COLOR, new Set(), false);
       // divider + pane labels
       ctx.fillStyle = "rgba(245,245,247,0.14)";
       ctx.fillRect(w / 2 - 1, 0, 2, h);
-      ctx.font = "600 10px 'JetBrains Mono', monospace";
+      ctx.font = "600 11px Inter, -apple-system, 'Segoe UI', sans-serif";
       ctx.fillStyle = "rgba(163,194,147,0.85)";
       ctx.fillText("YOU", 12, h - 12);
       ctx.fillStyle = "rgba(0,229,255,0.85)";
@@ -320,14 +386,14 @@ export function SwingCanvas(props: SwingCanvasProps) {
     if (multi && p.dtl) {
       const dtlPane: Pane = { x: w / 2 + 1, y: 0, w: w / 2 - 1, h };
       drawBackdrop(ctx, dtlPane, p.dtlVideo, 29);
-      const Tdtl = p.dtl.frames.length;
-      const dtlFi = Math.max(0, Math.min(Tdtl - 1,
-        Math.round((fi / Math.max(T - 1, 1)) * (Tdtl - 1)) + p.frameOffset));
+      const dtlDraw = mediaPane(dtlPane, p.dtlVideo);
+      const dtlFi = p.dtlFrame ?? Math.max(0, Math.min(p.dtl.frames.length - 1,
+        Math.round((fi / Math.max(T - 1, 1)) * (p.dtl.frames.length - 1)) + p.frameOffset));
       const dtlF = p.dtl.frames[dtlFi];
-      if (dtlF) drawSkeleton(ctx, dtlF, dtlPane, "#FFB800", new Set(), false);
+      if (dtlF) drawSkeleton(ctx, dtlF, dtlDraw, "#FFB800", new Set(), false);
       ctx.fillStyle = "rgba(245,245,247,0.14)";
       ctx.fillRect(w / 2 - 1, 0, 2, h);
-      ctx.font = "600 10px 'JetBrains Mono', monospace";
+      ctx.font = "600 11px Inter, -apple-system, 'Segoe UI', sans-serif";
       ctx.fillStyle = "rgba(163,194,147,0.85)";
       ctx.fillText("FACE-ON", 12, h - 12);
       ctx.fillStyle = "rgba(255,184,0,0.85)";
@@ -340,7 +406,7 @@ export function SwingCanvas(props: SwingCanvasProps) {
       let current = entries[0]?.[0] ?? "setup";
       for (const [name, at] of entries) if (fi >= at) current = name;
       ctx.save();
-      ctx.font = "600 10px 'JetBrains Mono', monospace";
+      ctx.font = "600 11px Inter, -apple-system, 'Segoe UI', sans-serif";
       ctx.fillStyle = "rgba(245,245,247,0.55)";
       ctx.fillText(current.replace(/_/g, " ").toUpperCase(), 14, 20);
       ctx.restore();
@@ -359,7 +425,16 @@ export function SwingCanvas(props: SwingCanvasProps) {
       const p = propsRef.current;
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
       const cssW = canvas.clientWidth || 400;
-      const cssH = Math.round(cssW * 0.72);
+      // Portrait-leaning viewport: a phone is held vertically and the swing is
+      // a vertical motion, so give it the height. Wide screens (tablet/desktop)
+      // fall back to a shallower box so the frame does not run off-screen.
+      // The player is the point of the screen, so give it the room. Height is
+      // capped against the app shell (not the browser window) because the shell
+      // is a fixed-width phone frame on desktop.
+      const shell = canvas.closest(".phone") as HTMLElement | null;
+      const shellH = shell?.clientHeight || window.innerHeight;
+      const maxH = Math.max(280, Math.round(shellH * 0.74));
+      const cssH = Math.min(Math.round(cssW * 1.62), maxH);
       if (canvas.width !== Math.round(cssW * dpr) || canvas.height !== Math.round(cssH * dpr)) {
         canvas.width = Math.round(cssW * dpr);
         canvas.height = Math.round(cssH * dpr);

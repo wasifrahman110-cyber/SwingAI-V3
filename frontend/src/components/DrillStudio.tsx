@@ -1,27 +1,18 @@
 /**
  * DrillStudio — the drill library + reference swing library.
  *
- * Top section: drills matched to the faults detected in the current swing.
- * Middle: the full structured drill library.
+ * Shows only the drills prescribed for the faults actually detected in the
+ * current swing. The full DRILL_LIBRARY stays internal: dumping every drill
+ * at a golfer buries the two things they should work on this week.
+ *
  * Bottom: built-in model-swing library, loadable straight into Dual
  * Comparison mode.
  */
 
 import type { AnalysisResult } from "../types/pose.ts";
 import { REFERENCE_LIBRARY } from "../lib/demoData.ts";
-import { DRILL_LIBRARY, PRO_MODELS } from "../engine/drills.ts";
-import { faultGroup } from "../engine/diagnostics.ts";
 import { renderMarkdown } from "../lib/markdown.tsx";
 import { useState } from "react";
-
-/** The full V4 drill library — one entry per detectable fault code. */
-const FULL_LIBRARY = Object.entries(DRILL_LIBRARY).map(([code, spec]) => ({
-  code,
-  name: spec.title,
-  group: faultGroup(code),
-  focus: spec.focusKey,
-  reps: spec.recommendedReps,
-}));
 
 interface DrillStudioProps {
   analysis: AnalysisResult | null;
@@ -31,7 +22,6 @@ interface DrillStudioProps {
 export function DrillStudio({ analysis, onLoadReference }: DrillStudioProps) {
   const [openDrill, setOpenDrill] = useState<string | null>(null);
   const matched = analysis?.drills ?? [];
-  const matchedCodes = new Set(matched.map((d) => d.faultCode));
 
   return (
     <div className="screen">
@@ -58,26 +48,6 @@ export function DrillStudio({ analysis, onLoadReference }: DrillStudioProps) {
           {openDrill === d.faultCode && (
             <div className="studio-drill-body">{renderMarkdown(d.markdown)}</div>
           )}
-        </section>
-      ))}
-
-      <div className="studio-sub">Full drill library · {FULL_LIBRARY.length} drills</div>
-      {FULL_LIBRARY.map((d) => (
-        <section className="line-section" key={d.code}>
-          <div className="studio-lib-row">
-            <div>
-              <div className="fix-name">
-                {d.name}
-                <span className="group-tag">{d.group}</span>
-                {matchedCodes.has(d.code) && <span className="pill accent">active</span>}
-              </div>
-              <p className="studio-how">{d.focus}</p>
-              <div className="fix-metric">
-                {d.reps}
-                {PRO_MODELS[d.code] && ` · watch: ${PRO_MODELS[d.code]!.pro}`}
-              </div>
-            </div>
-          </div>
         </section>
       ))}
 

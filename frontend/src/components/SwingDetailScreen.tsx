@@ -18,7 +18,9 @@ import type {
 } from "../types/pose.ts";
 import { TELESTRATOR_COLORS } from "../types/pose.ts";
 import { downloadTelemetryCard } from "../lib/telemetryCard.ts";
-import { normalizeSwing } from "../lib/engine.ts";
+import { downloadSwingReport } from "../lib/swingReport.ts";
+import { normalizeSwing, segmentPhases } from "../lib/engine.ts";
+import { prettyClipName } from "../lib/clipName.ts";
 import {
   computeImpactMetrics,
   estimateSmashFactor,
@@ -29,7 +31,7 @@ import { DrillSheet } from "./DrillSheet.tsx";
 import { FixList } from "./FixList.tsx";
 import { KinematicsChart } from "./KinematicsChart.tsx";
 import { Scrubber } from "./Scrubber.tsx";
-import { SwingCanvas, mappedReferenceFrame } from "./SwingCanvas.tsx";
+import { SwingCanvas, mappedReferenceFrame, phaseAlignedFrame } from "./SwingCanvas.tsx";
 import { TelestratorCanvas } from "./TelestratorCanvas.tsx";
 import { TelestratorToolbar } from "./TelestratorToolbar.tsx";
 import { ChevronLeft, Kebab, Pause, Play } from "./icons.tsx";
@@ -102,6 +104,8 @@ export function SwingDetailScreen({
   const [syncPlayheads, setSyncPlayheads] = useState(true);
   const [refFrameOverride, setRefFrameOverride] = useState<number | null>(null);
   const [voiceOn, setVoiceOn] = useState(false);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [exportMenu, setExportMenu] = useState(false);
   const [bookmarks, setBookmarks] = useState<ReadonlySet<string>>(new Set());
   const dateLabel = useRef(fmtClock());
 
@@ -150,25 +154,27 @@ export function SwingDetailScreen({
     }
   }, [initialPhase, analysis]);
 
-  // keep uploaded videos in sync with the playhead
+  // Keep the uploaded videos locked to the playhead. This runs while PLAYING
+  // too: the rAF loop advances `frame` every tick, so driving currentTime from
+  // the frame index is what makes the real footage move with the skeleton, and
+  // is what makes a synced dual comparison show both swings executing at the
+  // same time rather than only shifting the ghost overlay.
   useEffect(() => {
-    if (video && !playing) {
+    if (video) {
       const t = frame / user.fps;
       if (Math.abs(video.currentTime - t) > 0.02) video.currentTime = t;
     }
-    if (referenceVideo && reference && !playing) {
+    if (referenceVideo && reference) {
       if (syncPlayheads) {
-        if (analysis?.alignment) {
-          const rf = Math.max(
-            0,
-            Math.min(
-              reference.frames.length - 1,
-              (analysis.alignment.userToPro[frame] ?? 0) + frameOffset,
-            ),
-          );
-          const rt = rf / reference.fps;
-          if (Math.abs(referenceVideo.currentTime - rt) > 0.02) referenceVideo.currentTime = rt;
-        }
+        const refLen = reference.frames.length;
+        // DTW map when we have one, proportional map when we do not, so the
+        // reference clip still tracks the playhead before analysis lands.
+        const mapped = analysis?.alignment
+          ? (analysis.alignment.userToPro[frame] ?? 0)
+          : Math.round((frame / Math.max(user.frames.length - 1, 1)) * (refLen - 1));
+        const rf = Math.max(0, Math.min(refLen - 1, mapped + frameOffset));
+        const rt = rf / reference.fps;
+        if (Math.abs(referenceVideo.currentTime - rt) > 0.02) referenceVideo.currentTime = rt;
       } else if (refFrameOverride !== null) {
         // independent playhead: reference video follows refFrameOverride, not `frame`
         const rt = refFrameOverride / reference.fps;
@@ -184,6 +190,7 @@ export function SwingDetailScreen({
     analysis,
     frameOffset,
     user.fps,
+    user.frames.length,
     syncPlayheads,
     refFrameOverride,
   ]);
@@ -268,6 +275,36 @@ export function SwingDetailScreen({
       return next;
     });
   }, []);
+
+  // Multi-angle: segment the down-the-line clip on its own so the two camera
+  // angles can be held at the SAME point of the swing (address to address,
+  // top to top) instead of a naive proportional map that drifts whenever the
+  // two clips were started or stopped at slightly different moments.
+  const dtlPhases = useMemo(() => {
+    if (!dtl || dtl.frames.length < 10) return null;
+    try {
+      return segmentPhases(normalizeSwing(dtl), dtl.leadSide);
+    } catch {
+      return null;
+    }
+  }, [dtl]);
+
+  const dtlFrame = useMemo(() => {
+    if (!dtl) return null;
+    const len = dtl.frames.length;
+    if (!analysis || !dtlPhases) {
+      return Math.max(0, Math.min(len - 1, Math.round((frame / Math.max(T - 1, 1)) * (len - 1))));
+    }
+    return phaseAlignedFrame(frame, analysis.phases.user, dtlPhases, len);
+  }, [dtl, dtlPhases, analysis, frame, T]);
+
+  // and drive the DTL <video> from that same index, so the second clip
+  // actually plays rather than only its skeleton moving
+  useEffect(() => {
+    if (!dtlVideo || !dtl || dtlFrame === null) return;
+    const t = dtlFrame / dtl.fps;
+    if (Math.abs(dtlVideo.currentTime - t) > 0.02) dtlVideo.currentTime = t;
+  }, [dtlVideo, dtl, dtlFrame]);
 
   // face-on impact metrics (CoP, shaft lean, hip lead) — memo on analysis
   const impactMetrics: ImpactMetrics | null = useMemo(() => {
@@ -392,7 +429,7 @@ export function SwingDetailScreen({
               switchMode("solo");
             }}
           >
-            SINGLE
+            Single
           </button>
           <button
             role="tab"
@@ -403,7 +440,7 @@ export function SwingDetailScreen({
               switchMode("dual");
             }}
           >
-            DUAL
+            Dual
           </button>
           <button
             role="tab"
@@ -418,14 +455,14 @@ export function SwingDetailScreen({
               setViewMulti(true);
             }}
           >
-            MULTI-ANGLE
+            Multi-angle
           </button>
         </div>
         <button
           className="icon-btn"
-          aria-label="export telemetry card"
-          title="Export telemetry card"
-          onClick={() => analysis && downloadTelemetryCard(user, analysis, playerName)}
+          aria-label="export"
+          title="Export"
+          onClick={() => analysis && setExportMenu((v) => !v)}
         >
           <Kebab />
         </button>
@@ -451,6 +488,7 @@ export function SwingDetailScreen({
           multiView={viewMulti}
           dtl={dtl}
           dtlVideo={dtlVideo}
+          dtlFrame={dtlFrame}
           onFrameChange={onFrameChange}
           onTogglePlay={onTogglePlay}
         />
@@ -480,24 +518,41 @@ export function SwingDetailScreen({
             onTrackArc={trackBackswingArc}
           />
         )}
-        <div className="player-hud">
+        {/* Vertical rail down the right edge of the frame. It sits below the
+            feedback bar so the two never collide, and keeps Draw / Erase
+            reachable without covering the swing. */}
+        <div className="player-rail">
+          <button
+            className={`rail-btn ${annotating ? "on" : ""}`}
+            onClick={() => setTeleTool(annotating ? "off" : "pen")}
+            title={annotating ? "stop drawing" : "draw on the frame"}
+            aria-label={annotating ? "stop drawing" : "draw on the frame"}
+          >
+            <span className="rail-ico">✎</span>
+            <span className="rail-cap">Draw</span>
+          </button>
+          <button
+            className="rail-btn danger"
+            onClick={() => pushState([])}
+            disabled={annotations.length === 0}
+            title="erase all drawings"
+            aria-label="erase all drawings"
+          >
+            <span className="rail-ico">⌫</span>
+            <span className="rail-cap">Erase</span>
+          </button>
           {dual && (
             <button
-              className={`hud-chip ${ghostOn ? "on" : ""}`}
+              className={`rail-btn ${ghostOn ? "on" : ""}`}
               onClick={() => setGhostOn((g) => !g)}
-              style={{ pointerEvents: "auto", cursor: "pointer" }}
+              title="toggle the reference ghost overlay"
+              aria-label="toggle ghost overlay"
             >
-              GHOST
+              <span className="rail-ico">◎</span>
+              <span className="rail-cap">Ghost</span>
             </button>
           )}
-          <button
-            className={`hud-chip ${annotating ? "on" : ""}`}
-            onClick={() => setTeleTool(annotating ? "off" : "pen")}
-            style={{ pointerEvents: "auto", cursor: "pointer" }}
-          >
-            DRAW
-          </button>
-          <span className="hud-chip">{isDemo ? "DEMO" : "YOU"}</span>
+          <span className="rail-tag">{isDemo ? "Demo" : "You"}</span>
         </div>
         {!playing && !annotating && (
           <div className="player-overlay">
@@ -506,6 +561,77 @@ export function SwingDetailScreen({
             </button>
           </div>
         )}
+
+        {/* Feedback blanket: a thin bar pinned to the top of the frame that
+            pulls a translucent fault panel down over the still-playing video. */}
+        {analysis && (
+          <div className={`feedback-layer ${feedbackOpen ? "open" : ""}`}>
+            <button
+              className="feedback-bar"
+              onClick={() => setFeedbackOpen((v) => !v)}
+              aria-expanded={feedbackOpen}
+              aria-label={feedbackOpen ? "hide swing feedback" : "show swing feedback"}
+            >
+              <span className="fb-dot" data-sev={analysis.faults[0]?.severity ?? "clean"} />
+              <span className="fb-text">
+                {analysis.faults.length === 0
+                  ? "No major faults detected"
+                  : `${analysis.faults.length} fault${analysis.faults.length > 1 ? "s" : ""} found`}
+                {analysis.faults[0] ? ` · ${analysis.faults[0].name}` : ""}
+              </span>
+              <span className="fb-caret">{feedbackOpen ? "▲" : "▼"}</span>
+            </button>
+            <div className="feedback-sheet" aria-hidden={!feedbackOpen}>
+              {analysis.faults.length === 0 && (
+                <p className="fb-empty">Nothing flagged on this swing. Keep that pattern.</p>
+              )}
+              {analysis.faults.map((f) => (
+                <button key={f.code} className="fb-item" onClick={() => setOpenFault(f)}>
+                  <span className={`fb-sev sev-${f.severity}`}>{f.severity}</span>
+                  <span className="fb-name">{f.name}</span>
+                  <span className="fb-phase">{f.phase.replace(/_/g, " ")}</span>
+                  <span className="fb-meas">
+                    {f.measured}
+                    {f.unit === "deg" ? "°" : f.unit === "in" ? '"' : ""}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* In-frame transport (single view), the way a phone video player works */}
+        {!dual && !multi && !annotating && (
+          <div className="video-transport">
+            <button
+              className="vt-play"
+              onClick={onTogglePlay}
+              aria-label={playing ? "pause" : "play"}
+            >
+              {playing ? <Pause size={17} /> : <Play size={17} />}
+            </button>
+            <Scrubber totalFrames={T} frame={frame} analysis={analysis} onScrub={onScrub} />
+            <span className="vt-time">
+              {String(frame).padStart(3, "0")}/{String(T - 1).padStart(3, "0")}
+            </span>
+            <button
+              className={`vt-audio ${voiceOn ? "on" : ""}`}
+              onClick={() => {
+                setVoiceOn((v) => {
+                  if (v && typeof window !== "undefined" && "speechSynthesis" in window) {
+                    window.speechSynthesis.cancel();
+                  }
+                  return !v;
+                });
+              }}
+              title="voice feedback: reads the top 2 faults after analysis"
+              aria-label="toggle voice feedback"
+            >
+              {voiceOn ? "🔊" : "🔇"}
+            </button>
+          </div>
+        )}
+
         <div className="swing-index-badge">
           <span className="num">{(analysis?.swingIndex ?? 0).toFixed(1)}</span>
           <span className="cap">Swing Index</span>
@@ -513,24 +639,26 @@ export function SwingDetailScreen({
       </div>
 
       {dual && referenceName && (
-        <div className="ref-name-line">vs {referenceName}</div>
+        <div className="ref-name-line">vs {prettyClipName(referenceName)}</div>
       )}
 
       <div className="controls">
-        <div className="row">
-          <button
-            className="icon-btn"
-            onClick={onTogglePlay}
-            aria-label={playing ? "pause" : "play"}
-            style={{ width: 32, height: 32 }}
-          >
-            {playing ? <Pause size={20} /> : <Play size={20} />}
-          </button>
-          <Scrubber totalFrames={T} frame={frame} analysis={analysis} onScrub={onScrub} />
-          <span className="frame-readout">
-            {String(frame).padStart(3, "0")}/{String(T - 1).padStart(3, "0")}
-          </span>
-        </div>
+        {(dual || multi) && (
+          <div className="row">
+            <button
+              className="icon-btn"
+              onClick={onTogglePlay}
+              aria-label={playing ? "pause" : "play"}
+              style={{ width: 32, height: 32 }}
+            >
+              {playing ? <Pause size={20} /> : <Play size={20} />}
+            </button>
+            <Scrubber totalFrames={T} frame={frame} analysis={analysis} onScrub={onScrub} />
+            <span className="frame-readout">
+              {String(frame).padStart(3, "0")}/{String(T - 1).padStart(3, "0")}
+            </span>
+          </div>
+        )}
         {(dual || multi) && (
           <div className="row">
             <label>Master</label>
@@ -553,7 +681,7 @@ export function SwingDetailScreen({
                 onClick={() => setSyncImpact((v) => !v)}
                 title="auto-derive the frame offset from detected impact keyframes"
               >
-                {syncImpact ? "◉ SYNC IMPACT" : "○ SYNC IMPACT"}
+                {syncImpact ? "◉ Sync impact" : "○ Sync impact"}
               </button>
             )}
           </div>
@@ -643,7 +771,7 @@ export function SwingDetailScreen({
                     : "playheads are independent — click to re-link to the user swing"
                 }
               >
-                {syncPlayheads ? "◉ SYNC PLAYHEADS" : "○ SYNC PLAYHEADS"}
+                {syncPlayheads ? "◉ Linked" : "○ Independent"}
               </button>
             </div>
           </div>
@@ -660,21 +788,23 @@ export function SwingDetailScreen({
                 {s}×
               </button>
             ))}
-            <button
-              className={`speed-chip ${voiceOn ? "on" : ""}`}
-              onClick={() => {
-                setVoiceOn((v) => {
-                  if (v && typeof window !== "undefined" && "speechSynthesis" in window) {
-                    window.speechSynthesis.cancel();
-                  }
-                  return !v;
-                });
-              }}
-              title="voice feedback: reads the top 2 errors after analysis"
-              aria-label="toggle voice feedback"
-            >
-              🔊
-            </button>
+            {(dual || multi) && (
+              <button
+                className={`speed-chip ${voiceOn ? "on" : ""}`}
+                onClick={() => {
+                  setVoiceOn((v) => {
+                    if (v && typeof window !== "undefined" && "speechSynthesis" in window) {
+                      window.speechSynthesis.cancel();
+                    }
+                    return !v;
+                  });
+                }}
+                title="voice feedback: reads the top 2 errors after analysis"
+                aria-label="toggle voice feedback"
+              >
+                {voiceOn ? "🔊" : "🔇"}
+              </button>
+            )}
           </div>
           {dual && (
             <>
@@ -715,7 +845,7 @@ export function SwingDetailScreen({
               {frameOffset}f
             </span>
             <button className="align-impact" onClick={alignImpact}>
-              ALIGN IMPACT
+              Align impact
             </button>
           </div>
         )}
@@ -730,6 +860,8 @@ export function SwingDetailScreen({
           onSeek={onScrub}
         />
       )}
+
+      {analysis && impactMetrics && <CopSmashCard analysis={analysis} metrics={impactMetrics} />}
 
       <div className="tabs" role="tablist">
         {(
@@ -764,11 +896,41 @@ export function SwingDetailScreen({
         />
       )}
 
-      {analysis && (tab === "fixes" || tab === "bookmarked") && impactMetrics && (
-        <CopSmashCard analysis={analysis} metrics={impactMetrics} />
-      )}
-
       {analysis && tab === "metrics" && <MetricsTable analysis={analysis} frame={frame} />}
+
+      {exportMenu && analysis && (
+        <>
+          <div className="sheet-backdrop" onClick={() => setExportMenu(false)} />
+          <div className="upload-menu" role="menu" aria-label="export options">
+            <div className="grabber" />
+            <button
+              className="upload-option"
+              onClick={() => {
+                setExportMenu(false);
+                downloadSwingReport(user, analysis, playerName);
+              }}
+            >
+              <span className="uo-title">Coaching Report</span>
+              <span className="uo-sub">
+                Swing Index, every fault with your measurement against tolerance, and the
+                drill steps to fix each one. Opens in any browser, prints to PDF.
+              </span>
+            </button>
+            <button
+              className="upload-option"
+              onClick={() => {
+                setExportMenu(false);
+                downloadTelemetryCard(user, analysis, playerName);
+              }}
+            >
+              <span className="uo-title">Telemetry Card (PNG)</span>
+              <span className="uo-sub">
+                The shareable score card with your skeleton snapshot and phase strip.
+              </span>
+            </button>
+          </div>
+        </>
+      )}
 
       {openFault && analysis && (
         <DrillSheet fault={openFault} analysis={analysis} onClose={() => setOpenFault(null)} />

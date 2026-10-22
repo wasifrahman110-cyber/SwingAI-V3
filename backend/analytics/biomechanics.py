@@ -17,6 +17,22 @@ from .metrics import (
 IN = 1.0 / PLAYER_HEIGHT_IN
 
 
+def _grace_for(unit: str, target: float) -> float:
+    if unit == "in":
+        return max(0.5, target * 0.06)
+    if unit == "deg":
+        return max(2.5, target * 0.03)
+    if unit == "%":
+        return 1.5
+    return 0.0
+
+
+def _clears_grace(f: Fault) -> bool:
+    if f.unit == "order" or f.target == 0:
+        return True
+    return f.measured > f.target + _grace_for(f.unit, f.target)
+
+
 def _signed_wrist_cock(frames: np.ndarray, lead: bool) -> np.ndarray:
     """
     Signed wrist-cock angle (degrees) between the forearm (elbow->wrist) and
@@ -271,8 +287,9 @@ def detect_faults(
             f"Your peak-speed order was {order_str}; the efficient chain is "
             "hips → torso → arms → hands.")
 
-    faults.sort(key=lambda f: SEVERITY_ORDER.get(f.severity, 9))
-    return faults
+    reported = [f for f in faults if _clears_grace(f)]
+    reported.sort(key=lambda f: SEVERITY_ORDER.get(f.severity, 9))
+    return reported
 
 
 def group_of(code: str) -> str:

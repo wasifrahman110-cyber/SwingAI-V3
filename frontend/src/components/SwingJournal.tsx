@@ -59,7 +59,8 @@ export function SwingJournal({
           placeholder={
             "How did it feel? Swing thoughts, conditions, what clicked…\nUse #tags — e.g. #Driver #RangeSession #EarlyExtensionFix"
           }
-          rows={3}
+          rows={10}
+          className="journal-input-lg"
           aria-label="journal entry"
         />
         <div className="journal-quick-tags">
