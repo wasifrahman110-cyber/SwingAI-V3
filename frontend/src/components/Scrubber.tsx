@@ -68,7 +68,7 @@ export function Scrubber({ totalFrames, frame, analysis, onScrub }: ScrubberProp
         }
 
         // phase ticks — skip a label when it would collide with the previous
-        ctx.font = "600 8px 'JetBrains Mono', monospace";
+        ctx.font = "600 9px Inter, -apple-system, 'Segoe UI', sans-serif";
         let lastLabelEnd = -Infinity;
         for (const name of PHASE_NAMES) {
           const at = an.phases.user[name];

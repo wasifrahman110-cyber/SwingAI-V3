@@ -19,7 +19,8 @@ import type {
 import { TELESTRATOR_COLORS } from "../types/pose.ts";
 import { downloadTelemetryCard } from "../lib/telemetryCard.ts";
 import { downloadSwingReport } from "../lib/swingReport.ts";
-import { normalizeSwing } from "../lib/engine.ts";
+import { normalizeSwing, segmentPhases } from "../lib/engine.ts";
+import { prettyClipName } from "../lib/clipName.ts";
 import {
   computeImpactMetrics,
   estimateSmashFactor,
@@ -30,7 +31,7 @@ import { DrillSheet } from "./DrillSheet.tsx";
 import { FixList } from "./FixList.tsx";
 import { KinematicsChart } from "./KinematicsChart.tsx";
 import { Scrubber } from "./Scrubber.tsx";
-import { SwingCanvas, mappedReferenceFrame } from "./SwingCanvas.tsx";
+import { SwingCanvas, mappedReferenceFrame, phaseAlignedFrame } from "./SwingCanvas.tsx";
 import { TelestratorCanvas } from "./TelestratorCanvas.tsx";
 import { TelestratorToolbar } from "./TelestratorToolbar.tsx";
 import { ChevronLeft, Kebab, Pause, Play } from "./icons.tsx";
@@ -57,23 +58,6 @@ interface SwingDetailScreenProps {
   onSetMode: (mode: "solo" | "dual") => void;
   onNeedReference: () => void;
   onNeedDtl: () => void;
-}
-
-const UUIDISH = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
-const NOISY = /^(img|vid|video|mov|image|clip|pxl|dsc|screen[\s_-]?recording)[\s_-]?[\d._-]*$/i;
-
-/**
- * Phone camera rolls hand us names like "04DBC3C2-1271-4EB1-..." or
- * "IMG_4417". Those are not labels a golfer recognises, so fall back to a
- * readable description instead of printing the raw file name.
- */
-function prettyClipName(raw: string | null): string | null {
-  if (!raw) return null;
-  const t = raw.replace(/\.[^.]+$/, "").trim();
-  if (t === "" || UUIDISH.test(t) || NOISY.test(t) || /^[0-9a-f-]{16,}$/i.test(t)) {
-    return "Uploaded clip";
-  }
-  return t.replace(/[_-]+/g, " ").slice(0, 32);
 }
 
 const fmtClock = (): string => {
@@ -292,6 +276,36 @@ export function SwingDetailScreen({
     });
   }, []);
 
+  // Multi-angle: segment the down-the-line clip on its own so the two camera
+  // angles can be held at the SAME point of the swing (address to address,
+  // top to top) instead of a naive proportional map that drifts whenever the
+  // two clips were started or stopped at slightly different moments.
+  const dtlPhases = useMemo(() => {
+    if (!dtl || dtl.frames.length < 10) return null;
+    try {
+      return segmentPhases(normalizeSwing(dtl), dtl.leadSide);
+    } catch {
+      return null;
+    }
+  }, [dtl]);
+
+  const dtlFrame = useMemo(() => {
+    if (!dtl) return null;
+    const len = dtl.frames.length;
+    if (!analysis || !dtlPhases) {
+      return Math.max(0, Math.min(len - 1, Math.round((frame / Math.max(T - 1, 1)) * (len - 1))));
+    }
+    return phaseAlignedFrame(frame, analysis.phases.user, dtlPhases, len);
+  }, [dtl, dtlPhases, analysis, frame, T]);
+
+  // and drive the DTL <video> from that same index, so the second clip
+  // actually plays rather than only its skeleton moving
+  useEffect(() => {
+    if (!dtlVideo || !dtl || dtlFrame === null) return;
+    const t = dtlFrame / dtl.fps;
+    if (Math.abs(dtlVideo.currentTime - t) > 0.02) dtlVideo.currentTime = t;
+  }, [dtlVideo, dtl, dtlFrame]);
+
   // face-on impact metrics (CoP, shaft lean, hip lead) — memo on analysis
   const impactMetrics: ImpactMetrics | null = useMemo(() => {
     if (!analysis) return null;
@@ -474,6 +488,7 @@ export function SwingDetailScreen({
           multiView={viewMulti}
           dtl={dtl}
           dtlVideo={dtlVideo}
+          dtlFrame={dtlFrame}
           onFrameChange={onFrameChange}
           onTogglePlay={onTogglePlay}
         />
@@ -503,24 +518,41 @@ export function SwingDetailScreen({
             onTrackArc={trackBackswingArc}
           />
         )}
-        <div className="player-hud">
+        {/* Vertical rail down the right edge of the frame. It sits below the
+            feedback bar so the two never collide, and keeps Draw / Erase
+            reachable without covering the swing. */}
+        <div className="player-rail">
+          <button
+            className={`rail-btn ${annotating ? "on" : ""}`}
+            onClick={() => setTeleTool(annotating ? "off" : "pen")}
+            title={annotating ? "stop drawing" : "draw on the frame"}
+            aria-label={annotating ? "stop drawing" : "draw on the frame"}
+          >
+            <span className="rail-ico">✎</span>
+            <span className="rail-cap">Draw</span>
+          </button>
+          <button
+            className="rail-btn danger"
+            onClick={() => pushState([])}
+            disabled={annotations.length === 0}
+            title="erase all drawings"
+            aria-label="erase all drawings"
+          >
+            <span className="rail-ico">⌫</span>
+            <span className="rail-cap">Erase</span>
+          </button>
           {dual && (
             <button
-              className={`hud-chip ${ghostOn ? "on" : ""}`}
+              className={`rail-btn ${ghostOn ? "on" : ""}`}
               onClick={() => setGhostOn((g) => !g)}
-              style={{ pointerEvents: "auto", cursor: "pointer" }}
+              title="toggle the reference ghost overlay"
+              aria-label="toggle ghost overlay"
             >
-              Ghost
+              <span className="rail-ico">◎</span>
+              <span className="rail-cap">Ghost</span>
             </button>
           )}
-          <button
-            className={`hud-chip ${annotating ? "on" : ""}`}
-            onClick={() => setTeleTool(annotating ? "off" : "pen")}
-            style={{ pointerEvents: "auto", cursor: "pointer" }}
-          >
-            Draw
-          </button>
-          <span className="hud-chip">{isDemo ? "Demo" : "You"}</span>
+          <span className="rail-tag">{isDemo ? "Demo" : "You"}</span>
         </div>
         {!playing && !annotating && (
           <div className="player-overlay">

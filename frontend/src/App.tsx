@@ -13,10 +13,12 @@ import { ReferenceModal } from "./components/ReferenceModal.tsx";
 import { SwingDetailScreen } from "./components/SwingDetailScreen.tsx";
 import { SwingJournal } from "./components/SwingJournal.tsx";
 import { SignIn, loadProfile, type UserProfile } from "./components/SignIn.tsx";
+import { Walkthrough, tourSeen } from "./components/Walkthrough.tsx";
 import { TabBar, type Screen } from "./components/TabBar.tsx";
 import { useMediaPipe } from "./hooks/useMediaPipe.ts";
 import { useSwingAnalysis } from "./hooks/useSwingAnalysis.ts";
 import { REFERENCE_LIBRARY, demoDashboard } from "./lib/demoData.ts";
+import { prettyClipName } from "./lib/clipName.ts";
 import { loadJournal, loadSessions, saveSession } from "./lib/sessionStore.ts";
 import type { JournalEntry, PhaseName, SessionRecord, SwingSequence } from "./types/pose.ts";
 
@@ -29,6 +31,7 @@ const SWIPE_MIN_PX = 56;
 export default function App() {
   const [screen, setScreen] = useState<Screen>("home");
   const [profile, setProfile] = useState<UserProfile | null>(() => loadProfile());
+  const [showTour, setShowTour] = useState(() => !tourSeen());
   const [openPhase, setOpenPhase] = useState<PhaseName | null>(null);
   const [uploadMenu, setUploadMenu] = useState(false);
   const [refModal, setRefModal] = useState(false);
@@ -300,7 +303,7 @@ export default function App() {
             >
               <span className="uo-title">
                 Set Reference Swing
-                {swing.reference && <span className="pill accent">{swing.referenceName}</span>}
+                {swing.reference && <span className="pill accent">{prettyClipName(swing.referenceName)}</span>}
               </span>
               <span className="uo-sub">
                 Pick a model swing from the library or upload any clip — used by Dual
@@ -334,6 +337,7 @@ export default function App() {
       <TabBar screen={screen} busy={busy} onGo={setScreen} onUpload={() => setUploadMenu(true)} />
 
       {!profile && <SignIn onDone={setProfile} />}
+      {profile && showTour && <Walkthrough onDone={() => setShowTour(false)} />}
     </div>
   );
 }

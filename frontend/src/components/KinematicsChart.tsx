@@ -115,7 +115,7 @@ export function KinematicsChart({ analysis, fps, frame, totalFrames, onSeek }: C
       ctx.stroke();
 
       // legend + scale
-      ctx.font = "600 8.5px 'JetBrains Mono', monospace";
+      ctx.font = "600 9.5px Inter, -apple-system, 'Segoe UI', sans-serif";
       let lx = padL + 2;
       for (const s of SERIES) {
         ctx.fillStyle = s.color;
