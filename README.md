@@ -129,3 +129,61 @@ npm run typecheck    # or: npm run build (typecheck + vite build)
 - The MediaPipe pose model and WASM runtime load from a CDN on first video upload; every other feature (demo data, journal, drills, telestrator, previously analyzed sessions) runs fully offline.
 - The dev server proxies `/api` to `localhost:8000`, so both pieces can run side by side with no CORS configuration needed in development.
 - Reference/model swings used for comparison are synthetically generated (`lib/demoData.ts`) — no licensed footage is bundled with the app.
+
+## Imported history
+
+Development of SwingAI predates this repository. The work was kept as a
+series of folder snapshots on the author's machine rather than as git
+commits.
+
+On **2026-10-23** those snapshots were imported onto the `history-import`
+branch as eleven commits, tagged `v1` through `v11`, one per distinct
+snapshot, ending at the same tree as the `Version 3` commit on `main`.
+
+**The commit dates on those eleven commits are the dates of the import,
+not the dates the code was written.** They have deliberately not been
+backdated: no `GIT_AUTHOR_DATE` or `GIT_COMMITTER_DATE` was set and no
+timeline was reconstructed, so nothing in this history asserts a
+conception date it cannot support. Each commit message names the
+snapshot it was taken from and describes what actually changed against
+the previous one, read from the diff. Where a snapshot turned out to
+contain no development work, its commit says so.
+
+### Tags, snapshots and version numbers
+
+The tags `v1`..`v11` are import-sequence markers — they number the
+snapshots in order, and are **not** product version numbers. Two
+separate numbering schemes appear in this project's history, and they do
+not line up:
+
+| Tag | Snapshot folder | Version the snapshot itself declares |
+|-----|-----------------|--------------------------------------|
+| v1  | `swingai`       | V1 (named retrospectively in V2's README) |
+| v2  | `swingai 2`     | V2 |
+| v3  | `swingai 4`     | V4 |
+| v4  | `swingai 5`     | V4 — byte-identical duplicate of v3 |
+| v5  | `swingai 6`     | V4.1 |
+| v6  | `swingai 7`     | V5 |
+| v7  | `swingai 8`     | V5 — byte-identical duplicate of v6 |
+| v8  | `swingai 9`     | none (README drops its version label here) |
+| v9  | `swingai 10`    | none |
+| v10 | `swingai 11`    | none |
+| v11 | `swingai 12`    | Version 3 — the release state on `main` |
+
+Two gaps are real rather than missing: there is no snapshot of the
+internal **V3** — V4's README records that its launch-monitor,
+telemetry-sidebar, video-exporter and IndexedDB layer was deliberately
+dropped in favour of the V2 baseline, and no copy of it survives — and
+`swingai 3` is absent because it is byte-identical to `swingai 2`.
+
+The internal V1–V5 labels describe engine generations. **Version 3** is
+the release name for the finished application at `v11`, which is why it
+sits at the end of a chain whose last engine label is V5.
+
+Two paths are repository infrastructure rather than application content
+and are carried unchanged from the initial commit (`fcb8373`) through all
+eleven commits: `.gitignore` and `.idea/`. Most snapshots predate the
+repository and contain neither; one (`swingai 7`, tag `v6`) carries a
+longer `.gitignore` of its own, noted in that commit's message. Every
+other file — `README.md`, `backend/`, `frontend/` — is byte-identical to
+its snapshot.
