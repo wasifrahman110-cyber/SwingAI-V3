@@ -67,9 +67,8 @@ export function Scrubber({ totalFrames, frame, analysis, onScrub }: ScrubberProp
           ctx.fillRect(x, h / 2 - 8, Math.max(w / T, 1.5), 16);
         }
 
-        // phase ticks — skip a label when it would collide with the previous
+        // phase ticks
         ctx.font = "600 8px 'JetBrains Mono', monospace";
-        let lastLabelEnd = -Infinity;
         for (const name of PHASE_NAMES) {
           const at = an.phases.user[name];
           const x = (at / (T - 1)) * w;
@@ -79,14 +78,10 @@ export function Scrubber({ totalFrames, frame, analysis, onScrub }: ScrubberProp
           ctx.moveTo(x, h / 2 - 12);
           ctx.lineTo(x, h / 2 + 8);
           ctx.stroke();
+          ctx.fillStyle = "rgba(142,142,150,0.9)";
           const label = PHASE_LABELS[name].toUpperCase();
           const tw = ctx.measureText(label).width;
-          const lx = Math.min(Math.max(x - tw / 2, 1), w - tw - 1);
-          if (lx > lastLabelEnd + 4) {
-            ctx.fillStyle = "rgba(142,142,150,0.9)";
-            ctx.fillText(label, lx, h - 2);
-            lastLabelEnd = lx + tw;
-          }
+          ctx.fillText(label, Math.min(Math.max(x - tw / 2, 1), w - tw - 1), h - 2);
         }
       }
 

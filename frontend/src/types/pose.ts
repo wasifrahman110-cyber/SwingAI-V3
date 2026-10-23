@@ -80,9 +80,9 @@ export const PHASE_NAMES: readonly PhaseName[] = [
 ] as const;
 
 export const PHASE_LABELS: Record<PhaseName, string> = {
-  setup: "Address",
+  setup: "Set Up",
   top_of_backswing: "Top",
-  downswing: "Downswing",
+  downswing: "Mid Swing",
   impact: "Impact",
   follow_through: "Finish",
 };
@@ -129,102 +129,22 @@ export interface DrillCard {
   readonly faultCode: string;
   readonly drillName: string;
   readonly markdown: string;
-  /** Structured drill fields (additive — markdown remains the full card). */
-  readonly title?: string;
-  readonly description?: string;
-  readonly focusKey?: string;
-  readonly recommendedReps?: string;
 }
 
 export interface KinematicSequence {
   readonly order: readonly string[];
   readonly peakFrames: Record<string, number>;
   readonly sequenceCorrect: boolean;
-  /** Downswing evaluation window (frames) and the tie tolerance used. */
-  readonly window: { readonly start: number; readonly end: number };
-  readonly toleranceFrames: number;
 }
-
-export type KinematicSegment = "hips" | "torso" | "arms" | "hands";
-
-export type AnalysisMode = "solo" | "dual";
 
 /** Full analysis payload consumed by the UI. */
 export interface AnalysisResult {
-  readonly mode: AnalysisMode;
-  /** null in solo mode — there is no reference swing to align against. */
-  readonly alignment: Alignment | null;
-  readonly phases: { readonly user: Phases; readonly pro: Phases | null };
+  readonly alignment: Alignment;
+  readonly phases: { readonly user: Phases; readonly pro: Phases };
   readonly kinematicSequence: KinematicSequence;
-  /** |deg/frame| angular-velocity series per segment (chart + export card). */
-  readonly kinematicVelocity: Record<KinematicSegment, readonly number[]>;
-  /** |theta_t − theta_setup| spine-posture delta series (degrees). */
-  readonly spineDeltaDeg: readonly number[];
   readonly deviations: readonly DeviationFrame[];
   readonly faults: readonly Fault[];
   readonly drills: readonly DrillCard[];
   readonly swingIndex: number;
   readonly source: "backend" | "local";
-}
-
-// Telestrator annotations
-export interface AnnoPoint {
-  readonly x: number; // normalized 0..1 within the player
-  readonly y: number;
-}
-
-export type Annotation =
-  | {
-      readonly id: string;
-      readonly tool: "pen";
-      readonly color: string;
-      /** null = global overlay; number = locked to that video frame. */
-      readonly frame: number | null;
-      readonly points: readonly AnnoPoint[];
-    }
-  | {
-      readonly id: string;
-      readonly tool: "line";
-      readonly color: string;
-      readonly frame: number | null;
-      readonly a: AnnoPoint;
-      readonly b: AnnoPoint;
-    }
-  | {
-      readonly id: string;
-      readonly tool: "circle";
-      readonly color: string;
-      readonly frame: number | null;
-      readonly c: AnnoPoint;
-      readonly r: number; // normalized to player width
-    };
-
-export type TelestratorTool = Annotation["tool"] | "off";
-
-export const TELESTRATOR_COLORS = [
-  "#FFB800", // technical amber
-  "#00E5FF", // electric cyan
-  "#30D158", // pro green
-  "#FF3B30", // crimson accent
-  "#FFFFFF", // pure white
-] as const;
-
-// Sessions & journal (localStorage persistence)
-export interface SessionRecord {
-  readonly id: string;
-  readonly dateISO: string;
-  readonly label: string;
-  readonly mode: AnalysisMode;
-  readonly swingIndex: number;
-  readonly faultCodes: readonly string[];
-  /** Stored pose data so the session can be reloaded into the player. */
-  readonly swing: SwingSequence;
-}
-
-export interface JournalEntry {
-  readonly id: string;
-  readonly dateISO: string;
-  readonly sessionId: string | null;
-  readonly text: string;
-  readonly tags: readonly string[];
 }

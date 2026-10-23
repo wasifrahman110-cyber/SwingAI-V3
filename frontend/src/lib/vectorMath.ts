@@ -35,45 +35,6 @@ export function jointAngle3dDeg(a: Vec3, b: Vec3, c: Vec3): number {
   return angleBetweenDeg(sub(a, b), sub(c, b));
 }
 
-/**
- * Savitzky-Golay smoothing (quadratic fit) — suppresses landmark jitter
- * without flattening genuine velocity peaks the way a moving average does.
- * Supports window 5 and 7 via precomputed convolution coefficients; falls
- * back to a moving average for short series.
- */
-const SAVGOL_COEFFS: Record<number, readonly number[]> = {
-  5: [-3 / 35, 12 / 35, 17 / 35, 12 / 35, -3 / 35],
-  7: [-2 / 21, 3 / 21, 6 / 21, 7 / 21, 6 / 21, 3 / 21, -2 / 21],
-};
-
-export function savgolSmooth(x: readonly number[], window: 5 | 7 = 5): number[] {
-  const n = x.length;
-  const coeffs = SAVGOL_COEFFS[window];
-  if (!coeffs || n < window + 2) return movingAverage(x, 3);
-  const pad = (window - 1) / 2;
-  const out = new Array<number>(n);
-  for (let i = 0; i < n; i++) {
-    let sum = 0;
-    for (let k = 0; k < window; k++) {
-      const idx = Math.min(n - 1, Math.max(0, i + k - pad));
-      sum += (coeffs[k] as number) * (x[idx] as number);
-    }
-    out[i] = sum;
-  }
-  return out;
-}
-
-/** SavGol applied per-component to a Vec3 series. */
-export function savgolSmoothVec3(
-  v: readonly Vec3[],
-  window: 5 | 7 = 5,
-): Vec3[] {
-  const xs = savgolSmooth(v.map((p) => p[0]), window);
-  const ys = savgolSmooth(v.map((p) => p[1]), window);
-  const zs = savgolSmooth(v.map((p) => p[2]), window);
-  return xs.map((_, i): Vec3 => [xs[i] as number, ys[i] as number, zs[i] as number]);
-}
-
 /** Centered moving average, edge-padded, shape-preserving. */
 export function movingAverage(x: readonly number[], window: number): number[] {
   const n = x.length;

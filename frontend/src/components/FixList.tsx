@@ -6,7 +6,6 @@
 import { useState } from "react";
 import type { AnalysisResult, Fault, PhaseName } from "../types/pose.ts";
 import { PHASE_LABELS, PHASE_NAMES } from "../types/pose.ts";
-import { faultGroup } from "../engine/diagnostics.ts";
 import { Bookmark, BookmarkFilled, ChevronUp, Golfer } from "./icons.tsx";
 
 export const LINE_NUMBERS: Record<PhaseName, number> = {
@@ -83,10 +82,7 @@ export function FixList({
                 <button className="fix-item" key={f.code} onClick={() => onOpenFault(f)}>
                   <span className={`sev-bar sev-${f.severity}`} />
                   <span>
-                    <div className="fix-name">
-                      {f.name}
-                      <span className="group-tag">{faultGroup(f.code)}</span>
-                    </div>
+                    <div className="fix-name">{f.name}</div>
                     <div className="fix-metric">
                       {f.unit === "order"
                         ? "sequence fault"

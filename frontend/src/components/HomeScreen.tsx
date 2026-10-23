@@ -3,8 +3,7 @@
  * framework-score chart with goal marker, and the framework honeycomb map.
  */
 
-import type { AnalysisResult, PhaseName, SessionRecord } from "../types/pose.ts";
-import { FaultTrendDashboard } from "./FaultTrendDashboard.tsx";
+import type { AnalysisResult, PhaseName } from "../types/pose.ts";
 import type { DashboardData } from "../lib/demoData.ts";
 import { FrameworkScoreChart } from "./FrameworkScoreChart.tsx";
 import { HexMap } from "./HexMap.tsx";
@@ -14,11 +13,10 @@ interface HomeScreenProps {
   userName: string;
   dashboard: DashboardData;
   analysis: AnalysisResult | null;
-  sessions: readonly SessionRecord[];
   onOpenSwing: (phase?: PhaseName) => void;
 }
 
-export function HomeScreen({ userName, dashboard, analysis, sessions, onOpenSwing }: HomeScreenProps) {
+export function HomeScreen({ userName, dashboard, analysis, onOpenSwing }: HomeScreenProps) {
   const idx = analysis?.swingIndex ?? dashboard.swingIndex;
   return (
     <div className="screen">
@@ -106,8 +104,6 @@ export function HomeScreen({ userName, dashboard, analysis, sessions, onOpenSwin
         </div>
         <HexMap analysis={analysis} onOpenPhase={(p) => onOpenSwing(p)} />
       </div>
-
-      <FaultTrendDashboard sessions={sessions} />
     </div>
   );
 }
