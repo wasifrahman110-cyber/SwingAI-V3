@@ -160,6 +160,37 @@ export function demoSwings(): { user: SwingSequence; pro: SwingSequence } {
 }
 
 // ---------------------------------------------------------------------------
+// Built-in reference library (synthetic model swings — no licensed footage)
+// ---------------------------------------------------------------------------
+export interface ReferenceClip {
+  readonly id: string;
+  readonly name: string;
+  readonly description: string;
+  readonly make: () => SwingSequence;
+}
+
+export const REFERENCE_LIBRARY: readonly ReferenceClip[] = [
+  {
+    id: "model-driver-balanced",
+    name: "Model Driver — Balanced Tempo",
+    description: "Neutral 3:1 tempo, textbook sequencing. The default benchmark.",
+    make: () => synthSwing({ frames: 75, tempo: 1, seed: 3 }),
+  },
+  {
+    id: "model-driver-fast",
+    name: "Model Driver — Fast Tempo",
+    description: "Aggressive transition and quicker downswing — for players who load hard.",
+    make: () => synthSwing({ frames: 58, tempo: 0.85, seed: 21 }),
+  },
+  {
+    id: "model-iron-smooth",
+    name: "Model Mid-Iron — Smooth",
+    description: "Longer, smoother move with an early wrist set. Good rhythm reference.",
+    make: () => synthSwing({ frames: 88, tempo: 1.12, seed: 33 }),
+  },
+] as const;
+
+// ---------------------------------------------------------------------------
 // Dashboard demo telemetry (Home screen)
 // ---------------------------------------------------------------------------
 export interface DashboardData {

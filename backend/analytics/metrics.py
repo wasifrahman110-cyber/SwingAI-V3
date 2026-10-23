@@ -84,6 +84,24 @@ def midpoint_series(frames: np.ndarray, idx_a: int, idx_b: int) -> np.ndarray:
     return 0.5 * (frames[:, idx_a, :3] + frames[:, idx_b, :3])
 
 
+def savgol_smooth(x: np.ndarray, window: int = 5, order: int = 2) -> np.ndarray:
+    """
+    Savitzky-Golay smoothing along axis 0 — suppresses MediaPipe frame-to-frame
+    landmark jitter WITHOUT flattening real velocity peaks the way a plain
+    moving average does. Falls back to a moving average for very short series.
+    """
+    from scipy.signal import savgol_filter
+
+    n = x.shape[0]
+    if n < window + 2:
+        return moving_average(x, 3)
+    w = window if window % 2 == 1 else window + 1
+    w = min(w, n if n % 2 == 1 else n - 1)
+    if w <= order:
+        return moving_average(x, 3)
+    return savgol_filter(x, window_length=w, polyorder=order, axis=0, mode="nearest")
+
+
 def moving_average(x: np.ndarray, window: int = 5) -> np.ndarray:
     """Centered moving average along axis 0; edge-padded so shape is preserved."""
     if window <= 1 or x.shape[0] < 3:
@@ -165,13 +183,14 @@ class PoseNormalizer:
 class SwingMetrics:
     """Time-series metrics for one swing. All arrays have length T."""
     spine_angle_deg: np.ndarray        # trunk vs ground plane (90 = vertical)
+    spine_delta_deg: np.ndarray        # |theta_t - theta_0|: posture CHANGE from address
     lead_arm_angle_deg: np.ndarray     # elbow interior angle (180 = dead straight)
     hip_sway: np.ndarray               # signed lateral pelvis displacement (height units)
     hip_thrust: np.ndarray             # signed toward-ball pelvis displacement (height units)
     hip_rotation_deg: np.ndarray       # pelvis line rotation in the horizontal plane
     shoulder_rotation_deg: np.ndarray  # shoulder line rotation in the horizontal plane
     wrist_speed: np.ndarray            # lead-wrist speed (height units / frame)
-    kinematic_peaks: Dict[str, int] = field(default_factory=dict)  # segment -> frame of peak angular velocity
+    kinematic_velocity: Dict[str, np.ndarray] = field(default_factory=dict)  # segment -> |deg/frame| series
 
     def as_feature_matrix(self) -> np.ndarray:
         """
@@ -193,16 +212,20 @@ class SwingMetrics:
         return (m - mu) / sd
 
 
-def _segment_angular_speed(line_vec: np.ndarray) -> np.ndarray:
+def _segment_angular_speed(line_vec: np.ndarray, plane: str = "xz") -> np.ndarray:
     """
-    Angular speed (deg/frame) of a rotating body line (e.g. hip-to-hip vector)
-    measured in the horizontal (x, z) plane.
+    Angular speed (deg/frame) of a rotating body line.
+
+    plane="xz": horizontal plane — correct for pelvis/thorax ROTATION.
+    plane="xy": swing (vertical) plane — correct for the arm/club assembly,
+    which swings up-and-down far more than it rotates about the vertical axis.
+    Projecting arms onto the horizontal plane yields noise-dominated angles
+    and phantom peaks (a V1 false-positive source).
     """
-    ang = np.degrees(np.arctan2(line_vec[:, 2], line_vec[:, 0]))
-    ang = np.unwrap(np.radians(ang))
-    ang = np.degrees(ang)
-    vel = np.gradient(ang)
-    return np.abs(vel)
+    a = line_vec[:, 0]
+    b = line_vec[:, 2] if plane == "xz" else line_vec[:, 1]
+    ang = np.unwrap(np.arctan2(b, a))
+    return np.abs(np.gradient(np.degrees(ang)))
 
 
 def compute_metrics(frames: np.ndarray, lead_side: str = "left") -> SwingMetrics:
@@ -255,26 +278,43 @@ def compute_metrics(frames: np.ndarray, lead_side: str = "left") -> SwingMetrics
     wrist_pos = frames[:, wr, :3]
     wrist_speed = np.linalg.norm(np.gradient(wrist_pos, axis=0), axis=1)
 
-    # --- Kinematic sequence ----------------------------------------------
-    # Peak angular velocity ordering: hips -> torso -> arms -> hands.
+    # --- Kinematic angular-velocity series --------------------------------
+    # Coordinates are Savitzky-Golay smoothed BEFORE the temporal derivative
+    # so MediaPipe jitter can't produce phantom velocity spikes; peak ordering
+    # (hips -> torso -> arms -> hands) is evaluated later inside the downswing
+    # window only (see kinematic_sequence_report).
     arm_vec = vector_series(frames, sh, el)
     hand_vec = vector_series(frames, el, wr)
-    peaks = {
-        "hips": int(np.argmax(moving_average(_segment_angular_speed(hip_line), 5))),
-        "torso": int(np.argmax(moving_average(_segment_angular_speed(sho_line), 5))),
-        "arms": int(np.argmax(moving_average(_segment_angular_speed(arm_vec), 5))),
-        "hands": int(np.argmax(moving_average(_segment_angular_speed(hand_vec), 5))),
+    # SavGol runs twice: on the raw line vectors (kills positional jitter
+    # before the angle derivative) and on the resulting velocity series
+    # (kills residual angle noise on short segments) — the double pass keeps
+    # true peaks sharp while making peak ORDER robust to sensor noise.
+    kinematic_velocity = {
+        "hips": savgol_smooth(_segment_angular_speed(savgol_smooth(hip_line), "xz"), 7),
+        "torso": savgol_smooth(_segment_angular_speed(savgol_smooth(sho_line), "xz"), 7),
+        "arms": savgol_smooth(_segment_angular_speed(savgol_smooth(arm_vec), "xy"), 7),
+        "hands": savgol_smooth(_segment_angular_speed(savgol_smooth(hand_vec), "xy"), 7),
     }
 
+    # --- Spine-angle retention (posture delta from address) ---------------
+    # theta_0 is the median spine angle over the first few (address) frames;
+    # the retention series is |theta_t - theta_0| — a tour pro bent 30deg over
+    # the ball scores ~0 all swing long, because we track CHANGE, not the raw
+    # global angle.
+    spine_smoothed = savgol_smooth(spine_angle)
+    theta0 = float(np.median(spine_smoothed[: max(3, T // 15)]))
+    spine_delta = np.abs(spine_smoothed - theta0)
+
     return SwingMetrics(
-        spine_angle_deg=moving_average(spine_angle, 5),
-        lead_arm_angle_deg=moving_average(lead_arm, 5),
-        hip_sway=moving_average(hip_sway, 5),
-        hip_thrust=moving_average(hip_thrust, 5),
-        hip_rotation_deg=moving_average(hip_rot, 5),
-        shoulder_rotation_deg=moving_average(sho_rot, 5),
-        wrist_speed=moving_average(wrist_speed, 3),
-        kinematic_peaks=peaks,
+        spine_angle_deg=spine_smoothed,
+        spine_delta_deg=spine_delta,
+        lead_arm_angle_deg=savgol_smooth(lead_arm),
+        hip_sway=savgol_smooth(hip_sway),
+        hip_thrust=savgol_smooth(hip_thrust),
+        hip_rotation_deg=savgol_smooth(hip_rot),
+        shoulder_rotation_deg=savgol_smooth(sho_rot),
+        wrist_speed=savgol_smooth(wrist_speed),
+        kinematic_velocity=kinematic_velocity,
     )
 
 
@@ -318,7 +358,10 @@ def deviation_matrix(
     for ui, pi in path:
         ui = int(np.clip(ui, 0, len(user.spine_angle_deg) - 1))
         pi = int(np.clip(pi, 0, len(pro.spine_angle_deg) - 1))
-        spine_d = float(user.spine_angle_deg[ui] - pro.spine_angle_deg[pi])
+        # Compare posture RETENTION (change-from-address) rather than raw
+        # global angles — two golfers with different address postures should
+        # not register a deviation just for setting up differently.
+        spine_d = float(user.spine_delta_deg[ui] - pro.spine_delta_deg[pi])
         arm_d = float(user.lead_arm_angle_deg[ui] - pro.lead_arm_angle_deg[pi])
         sway_d = float(user.hip_sway[ui] - pro.hip_sway[pi])
         thrust_d = float(user.hip_thrust[ui] - pro.hip_thrust[pi])
@@ -346,10 +389,47 @@ def deviation_matrix(
     return out
 
 
-def kinematic_sequence_report(metrics: SwingMetrics) -> Dict[str, object]:
-    """Verify hips -> torso -> arms -> hands peak-velocity ordering."""
+def kinematic_sequence_report(
+    metrics: SwingMetrics,
+    downswing_start: int,
+    impact: int,
+) -> Dict[str, object]:
+    """
+    Verify hips -> torso -> arms -> hands peak-velocity ordering, evaluated
+    ONLY inside the downswing window [top_of_backswing, impact + margin].
+    Peaks elsewhere (waggle at address, recoil in the finish) are coaching
+    noise and must not flag a fault.
+    """
     order = ["hips", "torso", "arms", "hands"]
-    peaks = metrics.kinematic_peaks
+    T = len(metrics.spine_angle_deg)
+    lo = int(np.clip(downswing_start, 0, T - 2))
+    hi = int(np.clip(impact + max(2, T // 20), lo + 2, T))
+    peaks: Dict[str, int] = {}
+    for k in order:
+        vel = metrics.kinematic_velocity.get(k)
+        if vel is None or len(vel) == 0:
+            peaks[k] = lo
+            continue
+        window = np.asarray(vel[lo:hi], dtype=np.float64)
+        vmax = float(np.max(window))
+        if vmax <= EPS:
+            peaks[k] = lo
+            continue
+        # Peak time = centroid of the top-30% velocity mass. A raw argmax on a
+        # broad/plateau peak jumps frames under sensor noise; the centroid of
+        # the high-velocity region is stable.
+        mask = window >= 0.7 * vmax
+        t_idx = np.arange(len(window), dtype=np.float64)
+        peaks[k] = lo + int(round(float(np.sum(t_idx[mask] * window[mask]) / np.sum(window[mask]))))
     frames = [peaks[k] for k in order]
-    correct = all(frames[i] <= frames[i + 1] for i in range(len(frames) - 1))
-    return {"order": order, "peak_frames": peaks, "sequence_correct": correct}
+    # Tie tolerance: at 30 fps, peaks within ~2 frames are indistinguishable —
+    # only flag when a later segment peaks CLEARLY before an earlier one.
+    tol = max(2, T // 30)
+    correct = all(frames[i + 1] >= frames[i] - tol for i in range(len(frames) - 1))
+    return {
+        "order": order,
+        "peak_frames": peaks,
+        "sequence_correct": correct,
+        "window": {"start": lo, "end": hi - 1},
+        "tolerance_frames": tol,
+    }

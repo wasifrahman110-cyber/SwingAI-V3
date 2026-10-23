@@ -1,10 +1,11 @@
 """
-SwingAI FastAPI service.
+SwingAI FastAPI service (V2).
 
 POST /api/analyze
-    Body: user + pro landmark sequences (T x 33 x [x, y, z, visibility]).
-    Returns: DTW warp path, phase checkpoints, per-frame deviation matrix,
-             detected faults, and markdown drill cards.
+    Body: user landmark sequence, plus an OPTIONAL reference ("pro") sequence.
+    - Solo mode (no reference): phases, kinematics, faults, drills, solo index.
+    - Dual mode: everything above plus DTW warp path, aligned checkpoints,
+      and the reference-relative deviation matrix.
 
 Run:  uvicorn main:app --reload --port 8000
 """
@@ -12,7 +13,7 @@ Run:  uvicorn main:app --reload --port 8000
 from __future__ import annotations
 
 from dataclasses import asdict
-from typing import List, Literal
+from typing import List, Literal, Optional
 
 import numpy as np
 from fastapi import FastAPI, HTTPException
@@ -28,7 +29,7 @@ from analytics.metrics import (
     kinematic_sequence_report,
 )
 
-app = FastAPI(title="SwingAI Analytics Engine", version="1.0.0")
+app = FastAPI(title="SwingAI Analytics Engine", version="2.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -67,7 +68,7 @@ class SwingUpload(BaseModel):
 
 class AnalyzeRequest(BaseModel):
     user_swing: SwingUpload
-    pro_swing: SwingUpload
+    pro_swing: Optional[SwingUpload] = None  # omit for single-swing mode
 
 
 def _to_array(swing: SwingUpload) -> np.ndarray:
@@ -82,7 +83,7 @@ def _to_array(swing: SwingUpload) -> np.ndarray:
 # ---------------------------------------------------------------------------
 @app.get("/api/health")
 def health() -> dict:
-    return {"status": "ok", "engine": "swingai-analytics", "version": "1.0.0"}
+    return {"status": "ok", "engine": "swingai-analytics", "version": "2.0.0"}
 
 
 @app.post("/api/analyze")
@@ -90,51 +91,69 @@ def analyze(req: AnalyzeRequest) -> dict:
     try:
         normalizer = PoseNormalizer()
         user_norm = normalizer.normalize(_to_array(req.user_swing))
-        pro_norm = normalizer.normalize(_to_array(req.pro_swing))
-
         lead = req.user_swing.lead_side
         user_metrics = compute_metrics(user_norm.frames, lead_side=lead)
-        pro_metrics = compute_metrics(pro_norm.frames, lead_side=req.pro_swing.lead_side)
-
         user_phases = segment_phases(user_norm.frames, lead_side=lead)
-        pro_phases = segment_phases(pro_norm.frames, lead_side=req.pro_swing.lead_side)
 
-        dtw = align_swings(user_metrics, pro_metrics)
-        deviations = deviation_matrix(user_metrics, pro_metrics, dtw.path, lead_side=lead)
-        faults = detect_faults(user_metrics, pro_metrics, user_phases, deviations)
+        # Faults are fully self-referential (posture deltas from the golfer's
+        # own address) — identical results with or without a reference swing.
+        faults = detect_faults(user_metrics, user_phases)
         drills = recommend_drills(faults)
+        kin = kinematic_sequence_report(
+            user_metrics, user_phases.top_of_backswing, user_phases.impact
+        )
 
-        return {
-            "alignment": {
-                "path": dtw.path,
-                "cost": dtw.cost,
-                "normalized_cost": dtw.normalized_cost,
-                "user_to_pro": dtw.user_to_pro.tolist(),
-                "pro_to_user": dtw.pro_to_user.tolist(),
+        payload: dict = {
+            "mode": "dual" if req.pro_swing is not None else "solo",
+            "phases": {"user": user_phases.as_dict()},
+            "kinematic_sequence": kin,
+            "kinematic_velocity": {
+                k: v.tolist() for k, v in user_metrics.kinematic_velocity.items()
             },
-            "phases": {
-                "user": user_phases.as_dict(),
-                "pro": pro_phases.as_dict(),
-                "aligned": phase_aligned_checkpoints(user_phases, pro_phases, dtw),
-            },
-            "kinematic_sequence": kinematic_sequence_report(user_metrics),
-            "deviations": [asdict(d) for d in deviations],
+            "spine_delta_deg": user_metrics.spine_delta_deg.tolist(),
             "faults": [asdict(f) for f in faults],
             "drills": [
                 {"fault_code": d.fault.code, "drill_name": d.drill_name, "markdown": d.markdown}
                 for d in drills
             ],
-            "swing_index": _swing_index(dtw.normalized_cost, len(faults)),
         }
+
+        if req.pro_swing is None:
+            payload["alignment"] = None
+            payload["deviations"] = []
+            payload["swing_index"] = _solo_swing_index(faults)
+            return payload
+
+        pro_norm = normalizer.normalize(_to_array(req.pro_swing))
+        pro_metrics = compute_metrics(pro_norm.frames, lead_side=req.pro_swing.lead_side)
+        pro_phases = segment_phases(pro_norm.frames, lead_side=req.pro_swing.lead_side)
+        dtw = align_swings(user_metrics, pro_metrics)
+        deviations = deviation_matrix(user_metrics, pro_metrics, dtw.path, lead_side=lead)
+
+        payload["alignment"] = {
+            "path": dtw.path,
+            "cost": dtw.cost,
+            "normalized_cost": dtw.normalized_cost,
+            "user_to_pro": dtw.user_to_pro.tolist(),
+            "pro_to_user": dtw.pro_to_user.tolist(),
+        }
+        payload["phases"]["pro"] = pro_phases.as_dict()
+        payload["phases"]["aligned"] = phase_aligned_checkpoints(user_phases, pro_phases, dtw)
+        payload["deviations"] = [asdict(d) for d in deviations]
+        payload["swing_index"] = _dual_swing_index(dtw.normalized_cost, len(faults))
+        return payload
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-def _swing_index(normalized_cost: float, fault_count: int) -> float:
-    """
-    0–10 composite: DTW similarity (tempo + shape) minus fault penalties.
-    normalized_cost ~ 0 (identical) … ~4+ (nothing alike).
-    """
+def _dual_swing_index(normalized_cost: float, fault_count: int) -> float:
+    """0-10: DTW similarity to the reference minus fault penalties."""
     base = 10.0 * float(np.exp(-max(0.0, normalized_cost - 0.6) / 2.2))
-    penalized = base - 0.6 * fault_count
-    return round(float(np.clip(penalized, 0.0, 10.0)), 1)
+    return round(float(np.clip(base - 0.6 * fault_count, 0.0, 10.0)), 1)
+
+
+def _solo_swing_index(faults: list) -> float:
+    """0-10 with no reference: start from 10, weight penalties by severity."""
+    weights = {"critical": 1.6, "major": 1.1, "minor": 0.5}
+    penalty = sum(weights.get(f.severity, 1.0) for f in faults)
+    return round(float(np.clip(10.0 - penalty, 0.0, 10.0)), 1)

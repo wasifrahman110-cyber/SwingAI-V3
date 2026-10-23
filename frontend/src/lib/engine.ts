@@ -12,6 +12,7 @@ import type {
   DeviationFrame,
   DrillCard,
   Fault,
+  KinematicSegment,
   KinematicSequence,
   Phases,
   PoseFrame,
@@ -27,6 +28,8 @@ import {
   jointAngle3dDeg,
   mid,
   movingAverage,
+  savgolSmooth,
+  savgolSmoothVec3,
   sub,
   unwrap,
   type Vec3,
@@ -96,13 +99,16 @@ export function normalizeSwing(seq: SwingSequence, setupFrames = 5): NormalizedS
 // ---------------------------------------------------------------------------
 export interface SwingMetrics {
   readonly spineAngleDeg: readonly number[];
+  /** |theta_t − theta_setup|: posture CHANGE from address, in degrees. */
+  readonly spineDeltaDeg: readonly number[];
   readonly leadArmAngleDeg: readonly number[];
   readonly hipSway: readonly number[];
   readonly hipThrust: readonly number[];
   readonly hipRotationDeg: readonly number[];
   readonly shoulderRotationDeg: readonly number[];
   readonly wristSpeed: readonly number[];
-  readonly kinematicPeaks: Record<string, number>;
+  /** |deg/frame| angular-velocity series per body segment. */
+  readonly kinematicVelocity: Record<KinematicSegment, readonly number[]>;
 }
 
 const speedOf = (positions: readonly Vec3[]): number[] => {
@@ -120,10 +126,17 @@ const planeRotationDeg = (lines: readonly Vec3[]): number[] => {
   return raw.map((r) => ((r - first) * 180) / Math.PI);
 };
 
-const angularSpeed = (lines: readonly Vec3[]): number[] => {
-  const ang = unwrap(lines.map((v) => Math.atan2(v[2], v[0]))).map(
-    (r) => (r * 180) / Math.PI,
-  );
+/**
+ * Angular speed (|deg/frame|) of a rotating body line.
+ * plane "xz": horizontal plane — pelvis/thorax ROTATION.
+ * plane "xy": swing (vertical) plane — the arm/club assembly, which swings
+ * up-and-down far more than it rotates about the vertical axis. Projecting
+ * arms onto the horizontal plane yields noise-dominated phantom peaks.
+ */
+const angularSpeed = (lines: readonly Vec3[], plane: "xz" | "xy"): number[] => {
+  const ang = unwrap(
+    lines.map((v) => Math.atan2(plane === "xz" ? v[2] : v[1], v[0])),
+  ).map((r) => (r * 180) / Math.PI);
   return gradient(ang).map(Math.abs);
 };
 
@@ -171,22 +184,36 @@ export function computeMetrics(
 
   const wristPos = Array.from({ length: T }, (_, t) => at(t, WR));
 
-  const kinematicPeaks: Record<string, number> = {
-    hips: argmax(movingAverage(angularSpeed(hipLine), 5)),
-    torso: argmax(movingAverage(angularSpeed(shoLine), 5)),
-    arms: argmax(movingAverage(angularSpeed(armLine), 5)),
-    hands: argmax(movingAverage(angularSpeed(handLine), 5)),
+  // SavGol runs twice: on the raw line vectors (kills positional jitter
+  // before the angle derivative) and on the resulting velocity series (kills
+  // residual angle noise on short segments) — true peaks stay sharp while
+  // peak ORDER becomes robust to MediaPipe sensor noise.
+  const kinematicVelocity: Record<KinematicSegment, readonly number[]> = {
+    hips: savgolSmooth(angularSpeed(savgolSmoothVec3(hipLine), "xz"), 7),
+    torso: savgolSmooth(angularSpeed(savgolSmoothVec3(shoLine), "xz"), 7),
+    arms: savgolSmooth(angularSpeed(savgolSmoothVec3(armLine), "xy"), 7),
+    hands: savgolSmooth(angularSpeed(savgolSmoothVec3(handLine), "xy"), 7),
   };
 
+  // Spine-angle RETENTION: theta_0 is the median over the address frames;
+  // the series is |theta_t − theta_0| — posture change, not raw global angle.
+  // A tour pro bent 30° over the ball scores ~0 for the entire swing.
+  const spineSmoothed = savgolSmooth(spine, 5);
+  const addressWindow = spineSmoothed.slice(0, Math.max(3, Math.floor(T / 15)));
+  const sortedAddr = [...addressWindow].sort((a, b) => a - b);
+  const theta0 = sortedAddr[Math.floor(sortedAddr.length / 2)] ?? 0;
+  const spineDelta = spineSmoothed.map((v) => Math.abs(v - theta0));
+
   return {
-    spineAngleDeg: movingAverage(spine, 5),
-    leadArmAngleDeg: movingAverage(leadArm, 5),
-    hipSway: movingAverage(hipSway, 5),
-    hipThrust: movingAverage(hipThrust, 5),
-    hipRotationDeg: movingAverage(planeRotationDeg(hipLine), 5),
-    shoulderRotationDeg: movingAverage(planeRotationDeg(shoLine), 5),
-    wristSpeed: movingAverage(speedOf(wristPos), 3),
-    kinematicPeaks,
+    spineAngleDeg: spineSmoothed,
+    spineDeltaDeg: spineDelta,
+    leadArmAngleDeg: savgolSmooth(leadArm, 5),
+    hipSway: savgolSmooth(hipSway, 5),
+    hipThrust: savgolSmooth(hipThrust, 5),
+    hipRotationDeg: savgolSmooth(planeRotationDeg(hipLine), 5),
+    shoulderRotationDeg: savgolSmooth(planeRotationDeg(shoLine), 5),
+    wristSpeed: savgolSmooth(speedOf(wristPos), 5),
+    kinematicVelocity,
   };
 }
 
@@ -383,7 +410,9 @@ export function deviationMatrix(
   return path.map(([ui, pi]) => {
     const u = clamp(ui, 0, user.spineAngleDeg.length - 1);
     const p = clamp(pi, 0, pro.spineAngleDeg.length - 1);
-    const spineD = (user.spineAngleDeg[u] as number) - (pro.spineAngleDeg[p] as number);
+    // Compare posture RETENTION (change-from-address), not raw global angles —
+    // different address postures are not a deviation.
+    const spineD = (user.spineDeltaDeg[u] as number) - (pro.spineDeltaDeg[p] as number);
     const armD = (user.leadArmAngleDeg[u] as number) - (pro.leadArmAngleDeg[p] as number);
     const swayD = (user.hipSway[u] as number) - (pro.hipSway[p] as number);
     const thrustD = (user.hipThrust[u] as number) - (pro.hipThrust[p] as number);
@@ -421,11 +450,13 @@ const window_ = (s: readonly number[], a: number, b: number): number[] => {
   return s.slice(start, end) as number[];
 };
 
-export function detectFaults(
-  user: SwingMetrics,
-  userPhases: Phases,
-  deviations: readonly DeviationFrame[],
-): Fault[] {
+/**
+ * Fault detection is fully SELF-CONTAINED: every rule measures the golfer
+ * against biomechanical tolerances (posture deltas from their own address),
+ * never against a reference swing — single-swing mode gets the identical
+ * fault set, and a clean swing analyzed alone produces zero false positives.
+ */
+export function detectFaults(user: SwingMetrics, userPhases: Phases): Fault[] {
   const faults: Fault[] = [];
   const p = userPhases;
 
@@ -482,25 +513,25 @@ export function detectFaults(
     });
   }
 
-  // 4) Spine retention vs pro
-  if (deviations.length > 0) {
-    const worst = Math.max(...deviations.map((d) => Math.abs(d.spineAngleDelta)));
-    if (worst > 8) {
-      faults.push({
-        code: "spine_retention",
-        name: "Spine-Angle Retention",
-        severity: "minor",
-        phase: "downswing",
-        measured: Math.round(worst * 10) / 10,
-        target: 8,
-        unit: "deg",
-        summary: `Your spine angle deviated up to ${worst.toFixed(1)}° from the model swing (tolerance ± 8°).`,
-      });
-    }
+  // 4) Spine retention — posture delta from the golfer's OWN address:
+  //    |theta_impact − theta_setup| must stay ≤ 8°. (Raw global angle vs the
+  //    vertical would flag every correctly-bent-over golfer — the V1 bug.)
+  const deltaAtImpact = user.spineDeltaDeg[p.impact] as number;
+  if (deltaAtImpact > 8) {
+    faults.push({
+      code: "spine_retention",
+      name: "Spine-Angle Retention",
+      severity: "minor",
+      phase: "downswing",
+      measured: Math.round(deltaAtImpact * 10) / 10,
+      target: 8,
+      unit: "deg",
+      summary: `Your spine angle changed ${deltaAtImpact.toFixed(1)}° between address and impact (tolerance ≤ 8°). Losing posture mid-swing moves the low point.`,
+    });
   }
 
-  // 5) Kinematic sequence
-  const seq = kinematicSequenceReport(user);
+  // 5) Kinematic sequence — evaluated ONLY inside the downswing window.
+  const seq = kinematicSequenceReport(user, p.top_of_backswing, p.impact);
   if (!seq.sequenceCorrect) {
     const orderStr = Object.entries(seq.peakFrames)
       .sort((a, b) => a[1] - b[1])
@@ -523,11 +554,56 @@ export function detectFaults(
   return faults;
 }
 
-export function kinematicSequenceReport(m: SwingMetrics): KinematicSequence {
+/**
+ * Verify hips → torso → arms → hands peak-velocity ordering, evaluated ONLY
+ * inside the downswing window [top, impact + margin]. Peak time = centroid
+ * of the top-30% velocity mass (a raw argmax on a plateau peak jumps frames
+ * under sensor noise; the centroid is stable). Peaks within the tie tolerance
+ * (~2 frames at 30 fps) never flag a fault.
+ */
+export function kinematicSequenceReport(
+  m: SwingMetrics,
+  downswingStart: number,
+  impact: number,
+): KinematicSequence {
   const order = ["hips", "torso", "arms", "hands"] as const;
-  const frames = order.map((k) => m.kinematicPeaks[k] ?? 0);
-  const correct = frames.every((f, i) => i === 0 || (frames[i - 1] as number) <= f);
-  return { order, peakFrames: { ...m.kinematicPeaks }, sequenceCorrect: correct };
+  const T = m.spineAngleDeg.length;
+  const lo = clamp(downswingStart, 0, T - 2);
+  const hi = clamp(impact + Math.max(2, Math.floor(T / 20)), lo + 2, T);
+  const tol = Math.max(2, Math.floor(T / 30));
+
+  const peakFrames: Record<string, number> = {};
+  for (const k of order) {
+    const vel = m.kinematicVelocity[k];
+    const window = vel.slice(lo, hi);
+    const vmax = Math.max(...window);
+    if (!(vmax > 1e-9)) {
+      peakFrames[k] = lo;
+      continue;
+    }
+    let num = 0;
+    let den = 0;
+    for (let i = 0; i < window.length; i++) {
+      const v = window[i] as number;
+      if (v >= 0.7 * vmax) {
+        num += i * v;
+        den += v;
+      }
+    }
+    peakFrames[k] = lo + Math.round(num / den);
+  }
+
+  const frames = order.map((k) => peakFrames[k] as number);
+  const correct = frames.every(
+    (f, i) => i === 0 || f >= (frames[i - 1] as number) - tol,
+  );
+  return {
+    order,
+    peakFrames,
+    sequenceCorrect: correct,
+    window: { start: lo, end: hi - 1 },
+    toleranceFrames: tol,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -572,42 +648,76 @@ export function recommendDrills(faults: readonly Fault[]): DrillCard[] {
 }
 
 // ---------------------------------------------------------------------------
-// Full local pipeline
+// Full local pipeline (solo + dual)
 // ---------------------------------------------------------------------------
-export function swingIndex(normalizedCost: number, faultCount: number): number {
+export function dualSwingIndex(normalizedCost: number, faultCount: number): number {
   const base = 10 * Math.exp(-Math.max(0, normalizedCost - 0.6) / 2.2);
   return Math.round(clamp(base - 0.6 * faultCount, 0, 10) * 10) / 10;
 }
 
+export function soloSwingIndex(faults: readonly Fault[]): number {
+  const weights: Record<string, number> = { critical: 1.6, major: 1.1, minor: 0.5 };
+  const penalty = faults.reduce((s, f) => s + (weights[f.severity] ?? 1), 0);
+  return Math.round(clamp(10 - penalty, 0, 10) * 10) / 10;
+}
+
+/** Peak pelvis angular velocity in deg/s (telemetry-card headline number). */
+export function maxRotaryVelocity(analysis: AnalysisResult, fps: number): number {
+  const hips = analysis.kinematicVelocity.hips;
+  return Math.round(Math.max(...hips) * fps);
+}
+
 export function analyzeLocally(
   user: SwingSequence,
-  pro: SwingSequence,
+  reference: SwingSequence | null,
 ): AnalysisResult {
   const userNorm = normalizeSwing(user);
-  const proNorm = normalizeSwing(pro);
   const userMetrics = computeMetrics(userNorm, user.leadSide);
-  const proMetrics = computeMetrics(proNorm, pro.leadSide);
   const userPhases = segmentPhases(userNorm, user.leadSide);
-  const proPhases = segmentPhases(proNorm, pro.leadSide);
+  const faults = detectFaults(userMetrics, userPhases);
+  const drills = recommendDrills(faults);
+  const kin = kinematicSequenceReport(
+    userMetrics,
+    userPhases.top_of_backswing,
+    userPhases.impact,
+  );
 
+  const base = {
+    kinematicSequence: kin,
+    kinematicVelocity: userMetrics.kinematicVelocity,
+    spineDeltaDeg: userMetrics.spineDeltaDeg,
+    faults,
+    drills,
+    source: "local" as const,
+  };
+
+  if (!reference) {
+    return {
+      ...base,
+      mode: "solo",
+      alignment: null,
+      phases: { user: userPhases, pro: null },
+      deviations: [],
+      swingIndex: soloSwingIndex(faults),
+    };
+  }
+
+  const proNorm = normalizeSwing(reference);
+  const proMetrics = computeMetrics(proNorm, reference.leadSide);
+  const proPhases = segmentPhases(proNorm, reference.leadSide);
   const uf = featureMatrix(userMetrics);
   const pf = featureMatrix(proMetrics);
   const band = Math.max(5, Math.floor(0.25 * Math.max(uf.length, pf.length)));
   const alignment = dtwAlign(uf, pf, band);
-
   const deviations = deviationMatrix(userMetrics, proMetrics, alignment.path, user.leadSide);
-  const faults = detectFaults(userMetrics, userPhases, deviations);
-  const drills = recommendDrills(faults);
 
   return {
+    ...base,
+    mode: "dual",
     alignment,
     phases: { user: userPhases, pro: proPhases },
-    kinematicSequence: kinematicSequenceReport(userMetrics),
     deviations,
-    faults,
-    drills,
-    swingIndex: swingIndex(alignment.normalizedCost, faults.length),
-    source: "local",
+    swingIndex: dualSwingIndex(alignment.normalizedCost, faults.length),
   };
 }
 

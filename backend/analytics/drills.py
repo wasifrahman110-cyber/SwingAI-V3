@@ -10,12 +10,12 @@ parameters ("Target: keep hip sway under 2.5 in. Yours: 4.8 in").
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Sequence
+from typing import Dict, List, Sequence  # noqa: F401  (Sequence kept for API stability)
 
 import numpy as np
 
 from .dtw_aligner import SwingPhases
-from .metrics import DeviationFrame, SwingMetrics, kinematic_sequence_report
+from .metrics import SwingMetrics, kinematic_sequence_report
 
 # Conversion: normalized height units -> inches, assuming a 70 in golfer.
 # (Good enough for coaching copy; the raw normalized value is also reported.)
@@ -49,12 +49,13 @@ def _window(series: np.ndarray, start: int, end: int) -> np.ndarray:
     return series[start:end]
 
 
-def detect_faults(
-    user: SwingMetrics,
-    pro: SwingMetrics,
-    user_phases: SwingPhases,
-    deviations: Sequence[DeviationFrame],
-) -> List[Fault]:
+def detect_faults(user: SwingMetrics, user_phases: SwingPhases) -> List[Fault]:
+    """
+    Fault detection is fully SELF-CONTAINED: every rule measures the golfer
+    against biomechanical tolerances (posture deltas from their own address),
+    never against a reference swing — so single-swing mode gets the identical
+    fault set, and a tour pro analyzed alone produces zero false positives.
+    """
     faults: List[Fault] = []
     p = user_phases
 
@@ -137,32 +138,34 @@ def detect_faults(
         )
 
     # ------------------------------------------------------------------
-    # 4) SPINE-ANGLE RETENTION vs PRO — sustained delta over the DTW path.
+    # 4) SPINE-ANGLE RETENTION — posture delta from the golfer's OWN address:
+    #    delta_theta(impact) = |theta_impact - theta_setup| must stay <= 8 deg.
+    #    (Raw global angle vs vertical would flag every correctly-bent-over
+    #    golfer, tour pros included — that was the V1 false-positive bug.)
     # ------------------------------------------------------------------
-    if deviations:
-        spine_deltas = np.array([d.spine_angle_delta for d in deviations])
-        worst = float(np.max(np.abs(spine_deltas)))
-        if worst > 8.0:
-            faults.append(
-                Fault(
-                    code="spine_retention",
-                    name="Spine-Angle Retention",
-                    severity="minor",
-                    phase="downswing",
-                    measured=round(worst, 1),
-                    target=8.0,
-                    unit="deg",
-                    summary=(
-                        f"Your spine angle deviated up to {worst:.1f}° from the model swing "
-                        "(tolerance ± 8°)."
-                    ),
-                )
+    delta_at_impact = float(user.spine_delta_deg[p.impact])
+    if delta_at_impact > 8.0:
+        faults.append(
+            Fault(
+                code="spine_retention",
+                name="Spine-Angle Retention",
+                severity="minor",
+                phase="downswing",
+                measured=round(delta_at_impact, 1),
+                target=8.0,
+                unit="deg",
+                summary=(
+                    f"Your spine angle changed {delta_at_impact:.1f}° between address and "
+                    "impact (tolerance ≤ 8°). Losing posture mid-swing moves the low point."
+                ),
             )
+        )
 
     # ------------------------------------------------------------------
-    # 5) KINEMATIC SEQUENCE — hips -> torso -> arms -> hands ordering.
+    # 5) KINEMATIC SEQUENCE — hips -> torso -> arms -> hands peak ordering,
+    #    evaluated ONLY within the downswing window (top -> impact).
     # ------------------------------------------------------------------
-    seq = kinematic_sequence_report(user)
+    seq = kinematic_sequence_report(user, p.top_of_backswing, p.impact)
     if not seq["sequence_correct"]:
         peaks: Dict[str, int] = seq["peak_frames"]  # type: ignore[assignment]
         order_str = " → ".join(sorted(peaks, key=lambda k: peaks[k]))

@@ -1,9 +1,9 @@
 /**
- * SwingAI — analysis API client.
+ * SwingAI — analysis API client (V2).
  *
  * Prefers the FastAPI backend (exact NumPy pipeline); transparently falls
- * back to the in-browser TypeScript engine when the service is unreachable,
- * so the app always works.
+ * back to the in-browser TypeScript engine when the service is unreachable.
+ * Supports solo mode (no reference swing) and dual mode.
  */
 
 import type {
@@ -12,6 +12,7 @@ import type {
   DeviationFrame,
   DrillCard,
   Fault,
+  KinematicSegment,
   PhaseName,
   Phases,
   SwingSequence,
@@ -33,19 +34,27 @@ interface BackendDeviation {
 }
 
 interface BackendResponse {
+  mode: "solo" | "dual";
   alignment: {
     path: [number, number][];
     cost: number;
     normalized_cost: number;
     user_to_pro: number[];
     pro_to_user: number[];
+  } | null;
+  phases: {
+    user: Record<PhaseName, number>;
+    pro?: Record<PhaseName, number>;
   };
-  phases: { user: Record<PhaseName, number>; pro: Record<PhaseName, number> };
   kinematic_sequence: {
     order: string[];
     peak_frames: Record<string, number>;
     sequence_correct: boolean;
+    window: { start: number; end: number };
+    tolerance_frames: number;
   };
+  kinematic_velocity: Record<KinematicSegment, number[]>;
+  spine_delta_deg: number[];
   deviations: BackendDeviation[];
   faults: {
     code: string;
@@ -70,13 +79,15 @@ const toWire = (s: SwingSequence) => ({
 });
 
 function fromWire(r: BackendResponse): AnalysisResult {
-  const alignment: Alignment = {
-    path: r.alignment.path.map((p): WarpStep => [p[0] ?? 0, p[1] ?? 0]),
-    cost: r.alignment.cost,
-    normalizedCost: r.alignment.normalized_cost,
-    userToPro: r.alignment.user_to_pro,
-    proToUser: r.alignment.pro_to_user,
-  };
+  const alignment: Alignment | null = r.alignment
+    ? {
+        path: r.alignment.path.map((p): WarpStep => [p[0] ?? 0, p[1] ?? 0]),
+        cost: r.alignment.cost,
+        normalizedCost: r.alignment.normalized_cost,
+        userToPro: r.alignment.user_to_pro,
+        proToUser: r.alignment.pro_to_user,
+      }
+    : null;
   const deviations: DeviationFrame[] = r.deviations.map((d) => ({
     userFrame: d.user_frame,
     proFrame: d.pro_frame,
@@ -94,13 +105,21 @@ function fromWire(r: BackendResponse): AnalysisResult {
     markdown: d.markdown,
   }));
   return {
+    mode: r.mode,
     alignment,
-    phases: { user: r.phases.user as Phases, pro: r.phases.pro as Phases },
+    phases: {
+      user: r.phases.user as Phases,
+      pro: (r.phases.pro as Phases | undefined) ?? null,
+    },
     kinematicSequence: {
       order: r.kinematic_sequence.order,
       peakFrames: r.kinematic_sequence.peak_frames,
       sequenceCorrect: r.kinematic_sequence.sequence_correct,
+      window: r.kinematic_sequence.window,
+      toleranceFrames: r.kinematic_sequence.tolerance_frames,
     },
+    kinematicVelocity: r.kinematic_velocity,
+    spineDeltaDeg: r.spine_delta_deg,
     deviations,
     faults,
     drills,
@@ -111,15 +130,17 @@ function fromWire(r: BackendResponse): AnalysisResult {
 
 export async function analyzeSwings(
   user: SwingSequence,
-  pro: SwingSequence,
+  reference: SwingSequence | null,
 ): Promise<AnalysisResult> {
   try {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), API_TIMEOUT_MS);
+    const body: Record<string, unknown> = { user_swing: toWire(user) };
+    if (reference) body["pro_swing"] = toWire(reference);
     const resp = await fetch("/api/analyze", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ user_swing: toWire(user), pro_swing: toWire(pro) }),
+      body: JSON.stringify(body),
       signal: ctrl.signal,
     });
     clearTimeout(timer);
@@ -127,6 +148,6 @@ export async function analyzeSwings(
     return fromWire((await resp.json()) as BackendResponse);
   } catch {
     // Backend unreachable — run the identical pipeline in-browser.
-    return analyzeLocally(user, pro);
+    return analyzeLocally(user, reference);
   }
 }

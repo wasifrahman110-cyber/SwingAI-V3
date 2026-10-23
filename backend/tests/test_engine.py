@@ -167,18 +167,44 @@ def main() -> int:
     devs = deviation_matrix(usr_m, pro_m, dtw.path)
     ok &= check("deviation matrix length == path length", len(devs) == len(dtw.path))
 
-    faults = detect_faults(usr_m, pro_m, usr_ph, devs)
+    faults = detect_faults(usr_m, usr_ph)
     codes = {f.code for f in faults}
     ok &= check(f"early extension detected ({codes})", "early_extension" in codes)
     ok &= check("chicken wing detected", "chicken_wing" in codes)
     ok &= check("sway detected", "sway" in codes)
 
-    clean = detect_faults(pro_m, pro_m, pro_ph,
-                          deviation_matrix(pro_m, pro_m,
-                                           [(i, i) for i in range(len(pro_m.spine_angle_deg))]))
+    clean = detect_faults(pro_m, pro_ph)
     clean_codes = {f.code for f in clean}
-    ok &= check(f"pro-vs-pro triggers no positional faults ({clean_codes or 'none'})",
+    ok &= check(f"clean solo swing triggers no positional faults ({clean_codes or 'none'})",
                 not ({"early_extension", "chicken_wing", "sway", "spine_retention"} & clean_codes))
+
+    # --- V2 regression: spine retention must track DELTA from address -----
+    # A golfer holding a constant 30-deg forward bend all swing has perfect
+    # retention; the V1 bug scored the raw global angle and flagged them.
+    bent = pro_raw.copy()
+    # tip the whole upper body forward by shifting shoulders/head in z
+    for lm in (M.LEFT_SHOULDER, M.RIGHT_SHOULDER, M.NOSE, M.LEFT_EYE, M.RIGHT_EYE):
+        bent[:, lm, 2] += 0.12
+    bent_m = compute_metrics(norm.normalize(bent).frames)
+    bent_ph = segment_phases(norm.normalize(bent).frames)
+    ok &= check("constant forward bend -> tiny spine delta at impact",
+                float(bent_m.spine_delta_deg[bent_ph.impact]) < 8.0)
+    ok &= check("bent-over clean swing not flagged for spine retention",
+                "spine_retention" not in {f.code for f in detect_faults(bent_m, bent_ph)})
+
+    # --- V2 regression: landmark jitter must not break the kinematic order --
+    from analytics.metrics import kinematic_sequence_report
+    noisy = pro_raw + np.random.default_rng(99).normal(0, 0.004, pro_raw.shape)
+    noisy[:, :, 3] = 1.0
+    noisy_m = compute_metrics(norm.normalize(noisy).frames)
+    noisy_ph = segment_phases(norm.normalize(noisy).frames)
+    seq_clean = kinematic_sequence_report(pro_m, pro_ph.top_of_backswing, pro_ph.impact)
+    seq_noisy = kinematic_sequence_report(noisy_m, noisy_ph.top_of_backswing, noisy_ph.impact)
+    ok &= check("kinematic verdict stable under 3x sensor noise",
+                seq_clean["sequence_correct"] == seq_noisy["sequence_correct"])
+    ok &= check("kinematic peaks confined to downswing window",
+                all(seq_noisy["window"]["start"] <= f <= seq_noisy["window"]["end"]
+                    for f in seq_noisy["peak_frames"].values()))
 
     drills = recommend_drills(faults)
     ok &= check("every fault maps to a drill card", len(drills) == len([f for f in faults if f.code in

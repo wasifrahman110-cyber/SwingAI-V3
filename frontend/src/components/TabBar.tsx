@@ -1,41 +1,68 @@
-/** Bottom navigation bar: home / library / (+) analyze / player / progress. */
+/**
+ * Bottom navigation (V2): Home · Journal · (+) analyze · Drill Studio · Progress.
+ * The player opens from Home, uploads, or the session library.
+ */
 
-import { Book, Chart, Home, PlayerNav, Plus } from "./icons.tsx";
+import { Book, Chart, Home, Plus } from "./icons.tsx";
 
-export type Screen = "home" | "detail";
+export type Screen = "home" | "detail" | "journal" | "studio" | "progress";
 
 interface TabBarProps {
   screen: Screen;
   busy: boolean;
-  onGoHome: () => void;
-  onGoDetail: () => void;
+  onGo: (screen: Screen) => void;
   onUpload: () => void;
 }
 
-export function TabBar({ screen, busy, onGoHome, onGoDetail, onUpload }: TabBarProps) {
+const DrillIcon = ({ size = 24 }: { size?: number }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.9"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    <circle cx="12" cy="12" r="8" />
+    <circle cx="12" cy="12" r="4" />
+    <circle cx="12" cy="12" r="0.8" fill="currentColor" />
+  </svg>
+);
+
+export function TabBar({ screen, busy, onGo, onUpload }: TabBarProps) {
   return (
     <nav className="tabbar">
       <button
-        className={`nav-ico ${screen === "home" ? "active" : ""}`}
-        onClick={onGoHome}
+        className={`nav-ico ${screen === "home" || screen === "detail" ? "active" : ""}`}
+        onClick={() => onGo("home")}
         aria-label="home"
       >
         <Home />
       </button>
-      <button className="nav-ico" aria-label="library">
+      <button
+        className={`nav-ico ${screen === "journal" ? "active" : ""}`}
+        onClick={() => onGo("journal")}
+        aria-label="swing journal"
+      >
         <Book />
       </button>
       <button className="fab" onClick={onUpload} disabled={busy} aria-label="analyze a swing">
         <Plus />
       </button>
       <button
-        className={`nav-ico ${screen === "detail" ? "active" : ""}`}
-        onClick={onGoDetail}
-        aria-label="swing player"
+        className={`nav-ico ${screen === "studio" ? "active" : ""}`}
+        onClick={() => onGo("studio")}
+        aria-label="drill studio"
       >
-        <PlayerNav />
+        <DrillIcon />
       </button>
-      <button className="nav-ico" aria-label="progress">
+      <button
+        className={`nav-ico ${screen === "progress" ? "active" : ""}`}
+        onClick={() => onGo("progress")}
+        aria-label="progress"
+      >
         <Chart />
       </button>
     </nav>
