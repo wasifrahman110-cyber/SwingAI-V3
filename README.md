@@ -4,7 +4,7 @@ A computer-vision golf swing analyzer that turns a single phone-camera video int
 
 No footage ever has to leave the device: pose extraction, smoothing, kinematics, and fault detection all run in-browser by default, and the app keeps working with zero network access after the pose model is cached.
 
- System architecture
+## System architecture
 
 ```
 Video upload
