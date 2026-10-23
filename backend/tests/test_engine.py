@@ -249,6 +249,17 @@ def main() -> int:
     ok &= check("removed rules absent from all outputs",
                 not (removed & (codes | clean_codes | deg_codes)))
 
+    # --- V5 regression: optimistic recalibration ---------------------------
+    from main import _swing_index_from_score
+    for lbl, (mm, pph, ffr) in {"clean": (pro_m, pro_ph, pro_n.frames),
+                                "degenerate": (deg_m, deg_ph, deg_n.frames)}.items():
+        bench_faults = detect_faults(ffr, mm, pph)
+        bench_idx = _swing_index_from_score(bench_faults, mm.spine_delta_deg)
+        ok &= check(f"{lbl} benchmark scores in the elite 9.6-9.9 band ({bench_idx})",
+                    9.6 <= bench_idx <= 9.9)
+    faulty_idx = _swing_index_from_score(faults, usr_m.spine_delta_deg)
+    ok &= check(f"faulty swing scores below elite band ({faulty_idx})", faulty_idx < 9.0)
+
     drills = recommend_drills(faults)
     ok &= check("every fault maps to a drill card", len(drills) == len(faults))
     ok &= check("drill markdown carries targets",

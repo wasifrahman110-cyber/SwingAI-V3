@@ -130,7 +130,7 @@ def analyze(req: AnalyzeRequest) -> dict:
         if req.pro_swing is None:
             payload["alignment"] = None
             payload["deviations"] = []
-            payload["swing_index"] = _solo_swing_index(faults)
+            payload["swing_index"] = _swing_index_from_score(faults, user_metrics.spine_delta_deg)
             return payload
 
         pro_norm = normalizer.normalize(_to_array(req.pro_swing))
@@ -149,20 +149,28 @@ def analyze(req: AnalyzeRequest) -> dict:
         payload["phases"]["pro"] = pro_phases.as_dict()
         payload["phases"]["aligned"] = phase_aligned_checkpoints(user_phases, pro_phases, dtw)
         payload["deviations"] = [asdict(d) for d in deviations]
-        payload["swing_index"] = _dual_swing_index(dtw.normalized_cost, len(faults))
+        payload["swing_index"] = _swing_index_from_score(faults, user_metrics.spine_delta_deg)
         return payload
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-def _dual_swing_index(normalized_cost: float, fault_count: int) -> float:
-    """0-10: DTW similarity to the reference minus fault penalties."""
-    base = 10.0 * float(np.exp(-max(0.0, normalized_cost - 0.6) / 2.2))
-    return round(float(np.clip(base - 0.6 * fault_count, 0.0, 10.0)), 1)
-
-
-def _solo_swing_index(faults: list) -> float:
-    """0-10 with no reference: start from 10, weight penalties by severity."""
-    weights = {"critical": 1.6, "major": 1.1, "minor": 0.5}
-    penalty = sum(weights.get(f.severity, 1.0) for f in faults)
-    return round(float(np.clip(10.0 - penalty, 0.0, 10.0)), 1)
+def _swing_index_from_score(faults: list, spine_delta) -> float:
+    """
+    V5 optimistic recalibration (mirror of src/engine/scoring.ts):
+    100-point baseline, log soft-margin deductions, tour benchmarks land 96-99.
+    """
+    sev_weight = {"critical": 9.0, "major": 6.0, "minor": 3.0}
+    total = 0.0
+    for f in faults:
+        w = sev_weight.get(f.severity, 5.0)
+        if f.unit == "order" or f.target <= 0:
+            total += w * 0.75
+            continue
+        excess = max(0.0, (f.measured - f.target) / max(f.target, 1.0))
+        total += w * (0.5 + 0.5 * min(excess, 1.0))
+    arr = np.asarray(spine_delta, dtype=np.float64)
+    rms = float(np.sqrt(np.mean(arr ** 2))) if arr.size else 0.0
+    micro = min(4.0, max(1.0, 1.0 + 3.0 * np.log1p(rms) / np.log1p(10.0)))
+    score100 = max(0.0, min(100.0, 100.0 - total - micro))
+    return round(round(score100) / 10, 1)

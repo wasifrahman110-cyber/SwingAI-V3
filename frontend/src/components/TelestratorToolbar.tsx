@@ -19,6 +19,8 @@ interface ToolbarProps {
   onUndo: () => void;
   onRedo: () => void;
   onClear: () => void;
+  /** 🪄 auto-trace the backswing arc into the persistent annotation state. */
+  onTrackArc: () => void;
 }
 
 const ToolIcon = ({ kind }: { kind: "pen" | "line" | "circle" }) => {
@@ -58,6 +60,7 @@ export function TelestratorToolbar({
   onUndo,
   onRedo,
   onClear,
+  onTrackArc,
 }: ToolbarProps) {
   return (
     <div className="tele-toolbar" role="toolbar" aria-label="annotation tools">
@@ -84,6 +87,17 @@ export function TelestratorToolbar({
           aria-label={`color ${c}`}
         />
       ))}
+
+      <div className="tele-sep" />
+
+      <button
+        className="tele-btn arc"
+        onClick={onTrackArc}
+        aria-label="track backswing arc"
+        title="🪄 Track Backswing Arc — auto-trace the club path address → top"
+      >
+        🪄
+      </button>
 
       <div className="tele-sep" />
 

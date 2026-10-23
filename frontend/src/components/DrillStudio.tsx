@@ -9,7 +9,7 @@
 
 import type { AnalysisResult } from "../types/pose.ts";
 import { REFERENCE_LIBRARY } from "../lib/demoData.ts";
-import { DRILL_LIBRARY } from "../engine/drills.ts";
+import { DRILL_LIBRARY, PRO_MODELS } from "../engine/drills.ts";
 import { faultGroup } from "../engine/diagnostics.ts";
 import { renderMarkdown } from "../lib/markdown.tsx";
 import { useState } from "react";
@@ -72,7 +72,10 @@ export function DrillStudio({ analysis, onLoadReference }: DrillStudioProps) {
                 {matchedCodes.has(d.code) && <span className="pill accent">active</span>}
               </div>
               <p className="studio-how">{d.focus}</p>
-              <div className="fix-metric">{d.reps}</div>
+              <div className="fix-metric">
+                {d.reps}
+                {PRO_MODELS[d.code] && ` · watch: ${PRO_MODELS[d.code]!.pro}`}
+              </div>
             </div>
           </div>
         </section>

@@ -1,4 +1,4 @@
-# SwingAI V4 — V2 Baseline + Research-Grounded Diagnostics & Drill Engine
+# SwingAI V5 — Diagnostics, Drills, Multi-Angle, CoP & Voice Coaching
 
 Computer-vision golf swing analysis: in-browser MediaPipe pose extraction, single-swing or dual-comparison analysis with DTW synchronization, a telestrator annotation layer, kinematic-sequence telemetry, and a drill recommendation engine — in a mobile-style dark UI (deep slate `#0D0D0E`, surfaces `#18181B`, glass-blur floating layers).
 
@@ -46,6 +46,23 @@ V4 deliberately drops the V3 launch-monitor/telemetry-sidebar/video-exporter/Ind
 **Structured drill mapping** (`src/engine/drills.ts` + `backend/analytics/drills.py`): every fault maps to a drill object with `title`, step-by-step `description`, `focusKey`, and `recommendedReps` — Head Against Wall, Chair Behind Glutes, Pump Drill, Head Cover Under Armpit, Step-Through Finish, and 15 more. The coaching copy is grounded in published research: force-plate studies showing tour players carry **75–90% of pressure on the lead foot at impact** (98–100% into the finish) while amateurs hang back, and wrist-sensor data showing pros **reduce lead-wrist extension 20–25° from the top to impact** — the flat-to-flexed lead wrist that compresses the ball, versus the cupped-wrist flip.
 
 **UI integration (additive only):** each detected fault carries a body-group tag (Head & Spine / Shoulders & Torso / Arms & Wrists / Hips & Pelvis / Legs & Weight / Sequencing) in the collapsible fix panels, and the drill sheet leads with Focus and Reps chips. The Drill Studio lists the full 17-drill library. Telestrator drawings now persist across playback by default (Global Overlay); frame-locking is an explicit F/G opt-in, and only the Clear button erases drawings. Nothing in the V2 player, telestrator, or telemetry formats was altered.
+
+
+## V5 additions
+
+**Optimistic scoring** (`src/engine/scoring.ts`): 100-point baseline with logarithmic soft-margin deductions — a fault barely over threshold costs half its severity weight, blowouts cost full weight, and a micro-deviation term (RMS spine wobble) replaces an implausible perfect 100. Tour-benchmark swings land in the elite 9.6–9.9 band (test-enforced). Chicken wing is now lenient: >52° lead-elbow flex sustained ≥3 consecutive frames post-impact.
+
+**Dual master scrubber**: a normalized t∈[0,1] slider (dual mode only) drives both streams simultaneously, with a SYNC IMPACT toggle that auto-derives the frame offset from the detected impact keyframes.
+
+**Multi-Angle mode**: SINGLE | DUAL | MULTI-ANGLE selector; upload a down-the-line clip and view Face-On + DTL side-by-side with proportional sync. The face-on impact suite reports forward shaft lean (target 5–12°, gated on resolved hand landmarks) and lateral hip lead.
+
+**CoP + Smash card** directly below the identified-errors list: a lead/trail load bar (video-proxy CoP vs the 75–90% tour band) and a color-coded smash-factor estimate (>1.45 green / 1.35–1.44 amber / <1.35 red, honestly labeled "est" — no ball tracking).
+
+**Voice feedback** (🔊 toggle): Web Speech API reads the top 2 highest-severity errors only, after each analysis.
+
+**Fault Improvement Trend dashboard** on Home: per-session fault counts, most-frequent faults, and percentage reductions across recent sessions. **Watch Pro Model Swing** sections in the drill sheet and studio embed tour-player reference clips (privacy-enhanced YouTube search embeds — never stale links).
+
+**🪄 Track Backswing Arc** in the telestrator toolbar: auto-traces the club path address→top as a Catmull-Rom spline plus the shaft-plane extension ray to the turf, stored in the persistent annotation state (survives scrubbing/playback, undo-able, null-guarded rendering).
 
 ## The player
 

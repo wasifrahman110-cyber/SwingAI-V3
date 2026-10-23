@@ -1195,6 +1195,135 @@ input[type="range"]::-moz-range-thumb {
   font-size: 11px;
 }
 
+/* ---------- V5: CoP card, trend dashboard, pro media, sync ---------- */
+.cop-card {
+  padding: 12px 14px;
+}
+.cop-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+.cop-smash {
+  font-size: 13px;
+}
+.cop-smash-band {
+  font-size: 8.5px;
+  color: var(--muted);
+}
+.cop-bar {
+  height: 12px;
+  border-radius: 7px;
+  background: var(--card-3);
+  overflow: hidden;
+  border: 1px solid var(--line-soft);
+}
+.cop-bar-lead {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent-deep), var(--accent));
+  border-radius: 7px 0 0 7px;
+  transition: width 0.3s ease;
+}
+.cop-labels {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  padding-top: 5px;
+}
+.cop-target {
+  color: var(--faint);
+  font-size: 8.5px;
+}
+.cop-extra {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--muted);
+  border-top: 1px solid var(--line-soft);
+  margin-top: 8px;
+  padding-top: 7px;
+}
+.align-impact.on-sync {
+  background: var(--accent);
+  color: #0d130c;
+}
+.trend-sub {
+  text-align: center;
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  padding: 4px 0 8px;
+}
+.trend-most {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding-top: 4px;
+}
+.trend-label {
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+.trend-improve {
+  margin-top: 10px;
+  border-top: 1px solid var(--line-soft);
+  padding-top: 8px;
+}
+.trend-improve-row {
+  color: var(--accent);
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 3px 0;
+}
+.trend-improve-arrow {
+  margin-right: 6px;
+  font-size: 10px;
+}
+.pro-model {
+  margin-top: 14px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+.pro-model-head {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-bottom: 8px;
+}
+.pro-model-name {
+  color: var(--accent);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+.pro-model-frame {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg-1);
+}
+.tele-btn.arc {
+  font-size: 13px;
+}
+
 /* glassmorphism on floating layers */
 .drill-sheet,
 .upload-menu {

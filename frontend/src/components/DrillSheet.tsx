@@ -4,6 +4,7 @@
  */
 
 import type { AnalysisResult, Fault } from "../types/pose.ts";
+import { PRO_MODELS, proModelEmbedUrl } from "../engine/drills.ts";
 import { renderMarkdown } from "../lib/markdown.tsx";
 
 interface DrillSheetProps {
@@ -33,6 +34,24 @@ export function DrillSheet({ fault, analysis, onClose }: DrillSheetProps) {
           <div className="md">
             <h3>{fault.name}</h3>
             <p>{fault.summary}</p>
+          </div>
+        )}
+        {PRO_MODELS[fault.code] && (
+          <div className="pro-model" aria-label="watch pro model swing">
+            <div className="pro-model-head">
+              ▶ WATCH PRO MODEL SWING
+              <span className="pro-model-name">
+                {PRO_MODELS[fault.code]!.pro} — {PRO_MODELS[fault.code]!.focus}
+              </span>
+            </div>
+            <iframe
+              className="pro-model-frame"
+              src={proModelEmbedUrl(PRO_MODELS[fault.code]!)}
+              title={`${PRO_MODELS[fault.code]!.pro} model swing`}
+              allow="accelerometer; encrypted-media; picture-in-picture"
+              allowFullScreen
+              loading="lazy"
+            />
           </div>
         )}
       </div>

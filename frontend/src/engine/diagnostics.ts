@@ -211,6 +211,8 @@ export function detectFaults18(
       `Your wrist angle opened to ${castMax.toFixed(0)}° before mid-downswing (hold ≤ 165° until the shaft reaches horizontal) — the lag you built at the top (${topAngle.toFixed(0)}°) was thrown away early.`);
   }
 
+  // Chicken wing — V5 leniency: lead-elbow flex must exceed 52° AND persist
+  // for ≥ 3 consecutive frames post-impact. Single-frame blips never trigger.
   const elTriple = L
     ? ([LM.LEFT_SHOULDER, LM.LEFT_ELBOW, LM.LEFT_WRIST] as const)
     : ([LM.RIGHT_SHOULDER, LM.RIGHT_ELBOW, LM.RIGHT_WRIST] as const);
@@ -218,10 +220,20 @@ export function detectFaults18(
     F.map((_, t) => jointAngle3dDeg(at(F, t, elTriple[0]), at(F, t, elTriple[1]), at(F, t, elTriple[2]))),
     5,
   );
-  const wingFlex = 180 - minIn(elbowAngle, Math.max(0, p.impact - 2), p.follow_through + 1);
-  if (wingFlex > 35) {
-    add("chicken_wing", "Chicken Wing", "major", "impact", wingFlex, 35, "deg",
-      `Your lead elbow flexed ${wingFlex.toFixed(0)}° through impact (tolerance ≤ 35°) — it must extend down the target line, not break outward.`);
+  {
+    let run = 0;
+    let fired = false;
+    let peak = 0;
+    for (let t = Math.max(0, p.impact - 1); t <= Math.min(p.follow_through, elbowAngle.length - 1); t++) {
+      const flex = 180 - (elbowAngle[t] as number);
+      peak = Math.max(peak, flex);
+      run = flex > 52 ? run + 1 : 0;
+      if (run >= 3) fired = true;
+    }
+    if (fired) {
+      add("chicken_wing", "Chicken Wing", "major", "impact", peak, 52, "deg",
+        `Your lead elbow flexed ${peak.toFixed(0)}° through impact and held it for 3+ frames (tolerance ≤ 52° sustained) — it must extend down the target line, not break outward.`);
+    }
   }
 
   // Flip/scoop — gated exactly like casting: only meaningful when a real

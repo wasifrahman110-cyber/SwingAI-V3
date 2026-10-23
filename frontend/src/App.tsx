@@ -26,7 +26,9 @@ export default function App() {
   const [openPhase, setOpenPhase] = useState<PhaseName | null>(null);
   const [uploadMenu, setUploadMenu] = useState(false);
   const [refModal, setRefModal] = useState(false);
-  const uploadTargetRef = useRef<"user" | "reference">("user");
+  const uploadTargetRef = useRef<"user" | "reference" | "dtl">("user");
+  const [dtlSwing, setDtlSwing] = useState<SwingSequence | null>(null);
+  const [dtlVideo, setDtlVideo] = useState<HTMLVideoElement | null>(null);
   const swing = useSwingAnalysis();
   const mediapipe = useMediaPipe();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -99,6 +101,9 @@ export default function App() {
       if (!seq) return;
       if (target === "reference") {
         swing.setReference(seq, file.name.replace(/\.[^.]+$/, ""), makeVideo(file));
+      } else if (target === "dtl") {
+        setDtlSwing(seq);
+        setDtlVideo(makeVideo(file));
       } else {
         swing.replaceUserSwing(seq, makeVideo(file));
       }
@@ -107,7 +112,7 @@ export default function App() {
     [mediapipe, swing, makeVideo],
   );
 
-  const startUpload = useCallback((target: "user" | "reference") => {
+  const startUpload = useCallback((target: "user" | "reference" | "dtl") => {
     uploadTargetRef.current = target;
     setUploadMenu(false);
     setRefModal(false);
@@ -145,6 +150,7 @@ export default function App() {
           userName={USER_NAME}
           dashboard={dashboard}
           analysis={swing.analysis}
+          sessions={sessions}
           onOpenSwing={goDetail}
         />
       )}
@@ -161,9 +167,12 @@ export default function App() {
           referenceVideo={swing.referenceVideo}
           initialPhase={openPhase}
           playerName={USER_NAME}
+          dtl={dtlSwing}
+          dtlVideo={dtlVideo}
           onBack={() => setScreen("home")}
           onSetMode={swing.setMode}
           onNeedReference={() => setRefModal(true)}
+          onNeedDtl={() => startUpload("dtl")}
         />
       )}
       {screen === "journal" && (
@@ -232,6 +241,16 @@ export default function App() {
               <span className="uo-title">Analyze My Swing</span>
               <span className="uo-sub">
                 Upload your swing video — pose is extracted on-device and analyzed instantly.
+              </span>
+            </button>
+            <button className="upload-option" onClick={() => startUpload("dtl")}>
+              <span className="uo-title">
+                Add Down-the-Line Clip
+                {dtlSwing && <span className="pill accent">loaded</span>}
+              </span>
+              <span className="uo-sub">
+                A side-view (DTL) recording of the same swing — unlocks Multi-Angle
+                mode with the face-on clip.
               </span>
             </button>
             <button

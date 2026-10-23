@@ -220,3 +220,40 @@ export const GENERIC_DRILL: DrillSpec = {
   focusKey: "Feel the corrected position before adding speed.",
   recommendedReps: "10 slow-motion reps",
 };
+
+
+// ---------------------------------------------------------------------------
+// Pro model swing references — "Watch Pro Model Swing" (V5)
+// Embedded via YouTube's privacy-enhanced search-playlist embeds so links
+// never go stale; each fault points to a tour player famous for the correct
+// pattern.
+// ---------------------------------------------------------------------------
+export interface ProModel {
+  readonly pro: string;
+  readonly focus: string;
+  readonly searchQuery: string;
+}
+
+export const PRO_MODELS: Record<string, ProModel> = {
+  early_extension: { pro: "Rory McIlroy", focus: "hip rotation & posture retention", searchQuery: "rory mcilroy hip rotation slow motion face on" },
+  hip_slide: { pro: "Rory McIlroy", focus: "rotation around the lead post", searchQuery: "rory mcilroy lower body rotation slow motion" },
+  hip_stall: { pro: "Justin Thomas", focus: "hips accelerating through impact", searchQuery: "justin thomas hip rotation through impact slow motion" },
+  casting: { pro: "Sergio Garcia", focus: "extreme downswing lag", searchQuery: "sergio garcia lag slow motion down the line" },
+  flip_scoop: { pro: "Collin Morikawa", focus: "forward shaft lean & compression", searchQuery: "collin morikawa impact position shaft lean slow motion" },
+  chicken_wing: { pro: "Adam Scott", focus: "full lead-arm extension through the ball", searchQuery: "adam scott release extension slow motion face on" },
+  sway: { pro: "Justin Rose", focus: "centered coil into the trail hip", searchQuery: "justin rose backswing coil slow motion face on" },
+  head_sway: { pro: "Annika Sorenstam", focus: "rock-steady head through the pivot", searchQuery: "annika sorenstam swing slow motion face on" },
+  head_lift: { pro: "Louis Oosthuizen", focus: "posture held through strike", searchQuery: "louis oosthuizen swing slow motion face on"},
+  head_dip: { pro: "Steve Stricker", focus: "level, quiet body motion", searchQuery: "steve stricker swing slow motion" },
+  spine_retention: { pro: "Tommy Fleetwood", focus: "spine angle held into the finish", searchQuery: "tommy fleetwood swing slow motion down the line" },
+  reverse_spine: { pro: "Dustin Johnson", focus: "loaded trail side at the top", searchQuery: "dustin johnson top of backswing slow motion" },
+  overswing: { pro: "Jon Rahm", focus: "compact, powerful top position", searchQuery: "jon rahm compact backswing slow motion" },
+  shoulder_snatch: { pro: "Nelly Korda", focus: "silky lower-body-first transition", searchQuery: "nelly korda transition tempo slow motion" },
+  trail_heel_lift: { pro: "Scottie Scheffler", focus: "ground-force footwork", searchQuery: "scottie scheffler footwork slow motion" },
+  lead_knee_collapse: { pro: "Hideki Matsuyama", focus: "stable lower-body coil", searchQuery: "hideki matsuyama backswing pause slow motion" },
+  kinematic_sequence: { pro: "Nelly Korda", focus: "textbook kinematic sequencing & tempo", searchQuery: "nelly korda swing sequence slow motion" },
+};
+
+export function proModelEmbedUrl(model: ProModel): string {
+  return `https://www.youtube-nocookie.com/embed?listType=search&list=${encodeURIComponent(model.searchQuery)}`;
+}

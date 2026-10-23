@@ -22,6 +22,7 @@ import type {
 import { LM } from "../types/pose.ts";
 import { detectFaults18 } from "../engine/diagnostics.ts";
 import { DRILL_LIBRARY, GENERIC_DRILL } from "../engine/drills.ts";
+import { computeScore } from "../engine/scoring.ts";
 import {
   angleBetweenDeg,
   argmax,
@@ -524,15 +525,16 @@ export function recommendDrills(faults: readonly Fault[]): DrillCard[] {
 // ---------------------------------------------------------------------------
 // Full local pipeline (solo + dual)
 // ---------------------------------------------------------------------------
-export function dualSwingIndex(normalizedCost: number, faultCount: number): number {
-  const base = 10 * Math.exp(-Math.max(0, normalizedCost - 0.6) / 2.2);
-  return Math.round(clamp(base - 0.6 * faultCount, 0, 10) * 10) / 10;
-}
-
-export function soloSwingIndex(faults: readonly Fault[]): number {
-  const weights: Record<string, number> = { critical: 1.6, major: 1.1, minor: 0.5 };
-  const penalty = faults.reduce((s, f) => s + (weights[f.severity] ?? 1), 0);
-  return Math.round(clamp(10 - penalty, 0, 10) * 10) / 10;
+/**
+ * V5 optimistic recalibration: both solo and dual indices come from the
+ * 100-point log-soft-margin scoring engine (src/engine/scoring.ts). The DTW
+ * similarity cost remains available in the metrics tab for dual mode.
+ */
+export function swingIndexFromScore(
+  faults: readonly Fault[],
+  spineDeltaDeg: readonly number[],
+): number {
+  return computeScore(faults, spineDeltaDeg).score10;
 }
 
 /** Peak pelvis angular velocity in deg/s (telemetry-card headline number). */
@@ -572,7 +574,7 @@ export function analyzeLocally(
       alignment: null,
       phases: { user: userPhases, pro: null },
       deviations: [],
-      swingIndex: soloSwingIndex(faults),
+      swingIndex: swingIndexFromScore(faults, userMetrics.spineDeltaDeg),
     };
   }
 
@@ -591,7 +593,7 @@ export function analyzeLocally(
     alignment,
     phases: { user: userPhases, pro: proPhases },
     deviations,
-    swingIndex: dualSwingIndex(alignment.normalizedCost, faults.length),
+    swingIndex: swingIndexFromScore(faults, userMetrics.spineDeltaDeg),
   };
 }
 

@@ -7,7 +7,7 @@
  * Framework Fixes / Bookmarked / All Metrics tabs, telemetry-card export.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   AnalysisResult,
   Annotation,
@@ -18,6 +18,13 @@ import type {
 } from "../types/pose.ts";
 import { TELESTRATOR_COLORS } from "../types/pose.ts";
 import { downloadTelemetryCard } from "../lib/telemetryCard.ts";
+import { normalizeSwing } from "../lib/engine.ts";
+import {
+  computeImpactMetrics,
+  estimateSmashFactor,
+  smashBand,
+  type ImpactMetrics,
+} from "../engine/scoring.ts";
 import { DrillSheet } from "./DrillSheet.tsx";
 import { FixList } from "./FixList.tsx";
 import { KinematicsChart } from "./KinematicsChart.tsx";
@@ -43,9 +50,12 @@ interface SwingDetailScreenProps {
   referenceVideo: HTMLVideoElement | null;
   initialPhase: PhaseName | null;
   playerName: string;
+  dtl: SwingSequence | null;
+  dtlVideo: HTMLVideoElement | null;
   onBack: () => void;
   onSetMode: (mode: "solo" | "dual") => void;
   onNeedReference: () => void;
+  onNeedDtl: () => void;
 }
 
 const fmtClock = (): string => {
@@ -69,9 +79,12 @@ export function SwingDetailScreen({
   referenceVideo,
   initialPhase,
   playerName,
+  dtl,
+  dtlVideo,
   onBack,
   onSetMode,
   onNeedReference,
+  onNeedDtl,
 }: SwingDetailScreenProps) {
   const [frame, setFrame] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -81,6 +94,9 @@ export function SwingDetailScreen({
   const [frameOffset, setFrameOffset] = useState(0);
   const [tab, setTab] = useState<Tab>("fixes");
   const [openFault, setOpenFault] = useState<Fault | null>(null);
+  const [viewMulti, setViewMulti] = useState(false);
+  const [syncImpact, setSyncImpact] = useState(false);
+  const [voiceOn, setVoiceOn] = useState(false);
   const [bookmarks, setBookmarks] = useState<ReadonlySet<string>>(new Set());
   const dateLabel = useRef(fmtClock());
 
@@ -184,7 +200,115 @@ export function SwingDetailScreen({
   );
 
   const dual = mode === "dual" && reference !== null;
+  const multi = viewMulti && dtl !== null;
   const annotating = teleTool !== "off";
+
+  // face-on impact metrics (CoP, shaft lean, hip lead) — memo on analysis
+  const impactMetrics: ImpactMetrics | null = useMemo(() => {
+    if (!analysis) return null;
+    try {
+      const norm = normalizeSwing(user);
+      return computeImpactMetrics(
+        norm.frames as ReadonlyArray<ReadonlyArray<readonly [number, number, number]>>,
+        analysis.phases.user.impact,
+        analysis.phases.user.setup,
+        user.leadSide,
+      );
+    } catch {
+      return null;
+    }
+  }, [analysis, user]);
+
+  // SYNC IMPACT toggle: auto-derive the offset from detected impact keyframes
+  useEffect(() => {
+    if (!syncImpact) return;
+    if (analysis?.alignment && analysis.phases.pro) {
+      const mapped = analysis.alignment.userToPro[analysis.phases.user.impact] ?? 0;
+      setFrameOffset(Math.max(-30, Math.min(30, analysis.phases.pro.impact - mapped)));
+    } else {
+      setFrameOffset(0);
+    }
+  }, [syncImpact, analysis]);
+
+  // Voice feedback: broadcast ONLY the top 2 highest-severity errors
+  useEffect(() => {
+    if (!voiceOn || !analysis || analyzing) return;
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+    const top = analysis.faults.slice(0, 2);
+    const text =
+      top.length === 0
+        ? "Analysis complete. No major faults detected. Elite swing."
+        : `Analysis complete. Top focus ${top.length === 1 ? "area" : "areas"}: ` +
+          top.map((f) => `${f.name} in the ${f.phase.replace(/_/g, " ")}`).join(", and ") + ".";
+    try {
+      window.speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      u.rate = 0.95;
+      window.speechSynthesis.speak(u);
+    } catch {
+      /* speech unavailable */
+    }
+  }, [voiceOn, analysis, analyzing]);
+
+  // 🪄 Track Backswing Arc: hand-centroid trajectory address -> top, plus the
+  // shaft-plane extension ray, pushed into the PERSISTENT annotation state.
+  const trackBackswingArc = useCallback(() => {
+    if (!analysis) return;
+    const top = analysis.phases.user.top_of_backswing;
+    const setup = analysis.phases.user.setup;
+    const half = dual || multi ? 0.5 : 1; // split view: face-on pane is the left half
+    const handMid = (t: number): { x: number; y: number } | null => {
+      const f = user.frames[t];
+      if (!f) return null;
+      const idx = user.leadSide === "left" ? [17, 19, 21] : [18, 20, 22];
+      let x = 0;
+      let y = 0;
+      for (const i of idx) {
+        const lm = f[i];
+        if (!lm) return null;
+        x += lm.x / 3;
+        y += lm.y / 3;
+      }
+      return { x: x * half, y };
+    };
+    const pts: Array<{ x: number; y: number }> = [];
+    for (let t = setup; t <= Math.min(top, user.frames.length - 1); t++) {
+      const pt = handMid(t);
+      if (pt) pts.push(pt);
+    }
+    if (pts.length < 4) return;
+    const uid = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    const arc: Annotation = {
+      id: uid(), tool: "pen", color: "#FF2D95", frame: null, points: pts,
+    };
+    // shaft-plane ray: address hand position extended along the club direction
+    // down to the turf line (lead-ankle height)
+    const f0 = user.frames[setup];
+    const wrIdx = user.leadSide === "left" ? 15 : 16;
+    const ankleIdx = user.leadSide === "left" ? 27 : 28;
+    const w0 = f0?.[wrIdx];
+    const h0 = handMid(setup);
+    const ankle = f0?.[ankleIdx];
+    let ray: Annotation | null = null;
+    if (w0 && h0 && ankle) {
+      const wx = w0.x * half;
+      const dirX = h0.x - wx;
+      const dirY = h0.y - w0.y;
+      const len = Math.hypot(dirX, dirY);
+      if (len > 1e-4) {
+        const groundY = ankle.y + 0.02;
+        const k = (groundY - w0.y) / (dirY || 1e-6);
+        const gx = wx + dirX * Math.max(k, 0);
+        ray = {
+          id: uid(), tool: "line", color: "#FFB800", frame: null,
+          a: { x: wx - dirX * 2, y: w0.y - dirY * 2 },
+          b: { x: Math.min(Math.max(gx, 0), 1), y: Math.min(groundY, 1) },
+        };
+      }
+    }
+    pushState(ray ? [...annotations, arc, ray] : [...annotations, arc]);
+    if (teleTool === "off") setTeleTool("pen"); // reveal the toolbar/overlay
+  }, [analysis, user, dual, multi, annotations, pushState, teleTool]);
 
   return (
     <div className="screen">
@@ -195,19 +319,40 @@ export function SwingDetailScreen({
         <div className="mode-selector" role="tablist" aria-label="analysis mode">
           <button
             role="tab"
-            aria-selected={mode === "solo"}
-            className={`mode-chip ${mode === "solo" ? "on" : ""}`}
-            onClick={() => switchMode("solo")}
+            aria-selected={mode === "solo" && !viewMulti}
+            className={`mode-chip ${mode === "solo" && !viewMulti ? "on" : ""}`}
+            onClick={() => {
+              setViewMulti(false);
+              switchMode("solo");
+            }}
           >
-            SINGLE SWING
+            SINGLE
           </button>
           <button
             role="tab"
-            aria-selected={mode === "dual"}
-            className={`mode-chip ${mode === "dual" ? "on" : ""}`}
-            onClick={() => switchMode("dual")}
+            aria-selected={mode === "dual" && !viewMulti}
+            className={`mode-chip ${mode === "dual" && !viewMulti ? "on" : ""}`}
+            onClick={() => {
+              setViewMulti(false);
+              switchMode("dual");
+            }}
           >
-            DUAL COMPARISON
+            DUAL
+          </button>
+          <button
+            role="tab"
+            aria-selected={viewMulti}
+            className={`mode-chip ${viewMulti ? "on" : ""}`}
+            onClick={() => {
+              if (!dtl) {
+                onNeedDtl();
+                return;
+              }
+              switchMode("solo");
+              setViewMulti(true);
+            }}
+          >
+            MULTI-ANGLE
           </button>
         </div>
         <button
@@ -236,6 +381,9 @@ export function SwingDetailScreen({
           video={video}
           referenceVideo={referenceVideo}
           interactive={!annotating}
+          multiView={viewMulti}
+          dtl={dtl}
+          dtlVideo={dtlVideo}
           onFrameChange={onFrameChange}
           onTogglePlay={onTogglePlay}
         />
@@ -262,6 +410,7 @@ export function SwingDetailScreen({
             onUndo={() => setHistIdx((i) => Math.max(0, i - 1))}
             onRedo={() => setHistIdx((i) => Math.min(history.length - 1, i + 1))}
             onClear={() => pushState([])}
+            onTrackArc={trackBackswingArc}
           />
         )}
         <div className="player-hud">
@@ -315,6 +464,33 @@ export function SwingDetailScreen({
             {String(frame).padStart(3, "0")}/{String(T - 1).padStart(3, "0")}
           </span>
         </div>
+        {(dual || multi) && (
+          <div className="row">
+            <label>Master</label>
+            <input
+              type="range"
+              min={0}
+              max={1000}
+              value={T > 1 ? Math.round((frame / (T - 1)) * 1000) : 0}
+              onChange={(e) => {
+                // normalized t in [0,1] drives BOTH streams simultaneously
+                const t = Number(e.currentTarget.value) / 1000;
+                setPlaying(false);
+                setFrame(Math.round(t * (T - 1)));
+              }}
+              aria-label="master dual-video scrubber"
+            />
+            {dual && (
+              <button
+                className={`align-impact ${syncImpact ? "on-sync" : ""}`}
+                onClick={() => setSyncImpact((v) => !v)}
+                title="auto-derive the frame offset from detected impact keyframes"
+              >
+                {syncImpact ? "◉ SYNC IMPACT" : "○ SYNC IMPACT"}
+              </button>
+            )}
+          </div>
+        )}
         <div className="row">
           <label>Speed</label>
           <div className="speed-chips">
@@ -327,6 +503,21 @@ export function SwingDetailScreen({
                 {s}×
               </button>
             ))}
+            <button
+              className={`speed-chip ${voiceOn ? "on" : ""}`}
+              onClick={() => {
+                setVoiceOn((v) => {
+                  if (v && typeof window !== "undefined" && "speechSynthesis" in window) {
+                    window.speechSynthesis.cancel();
+                  }
+                  return !v;
+                });
+              }}
+              title="voice feedback: reads the top 2 errors after analysis"
+              aria-label="toggle voice feedback"
+            >
+              🔊
+            </button>
           </div>
           {dual && (
             <>
@@ -416,6 +607,10 @@ export function SwingDetailScreen({
         />
       )}
 
+      {analysis && (tab === "fixes" || tab === "bookmarked") && impactMetrics && (
+        <CopSmashCard analysis={analysis} metrics={impactMetrics} />
+      )}
+
       {analysis && tab === "metrics" && <MetricsTable analysis={analysis} frame={frame} />}
 
       {openFault && analysis && (
@@ -426,6 +621,50 @@ export function SwingDetailScreen({
 }
 
 // ---------------------------------------------------------------------------
+/** V5 metric card: CoP load bar + smash-factor estimate, below the errors. */
+function CopSmashCard({
+  analysis,
+  metrics,
+}: {
+  analysis: AnalysisResult;
+  metrics: ImpactMetrics;
+}) {
+  const smash = estimateSmashFactor(analysis.faults);
+  const band = smashBand(smash);
+  const bandColor = band === "elite" ? "#30D158" : band === "solid" ? "#FFB800" : "#FF3B30";
+  return (
+    <section className="line-section cop-card" aria-label="impact load and smash factor">
+      <div className="cop-head">
+        <span>IMPACT LOAD (CoP est.)</span>
+        <span className="cop-smash" style={{ color: bandColor }}>
+          SMASH {smash.toFixed(2)}
+          <span className="cop-smash-band"> {band === "elite" ? "ELITE" : band === "solid" ? "OK" : "LEAK"} · est</span>
+        </span>
+      </div>
+      <div className="cop-bar" role="img"
+        aria-label={`lead ${metrics.cop.leadPct} percent, trail ${metrics.cop.trailPct} percent`}>
+        <div className="cop-bar-lead" style={{ width: `${metrics.cop.leadPct}%` }} />
+      </div>
+      <div className="cop-labels">
+        <span>Lead: {metrics.cop.leadPct}%</span>
+        <span className="cop-target">tour: 75–90% lead at impact</span>
+        <span>Trail: {metrics.cop.trailPct}%</span>
+      </div>
+      <div className="cop-extra">
+        <span>
+          Shaft lean:{" "}
+          {metrics.shaftLeanDeg === null
+            ? "n/a (hands unresolved)"
+            : `${metrics.shaftLeanDeg > 0 ? "+" : ""}${metrics.shaftLeanDeg}° ${
+                metrics.shaftLeanDeg >= 5 && metrics.shaftLeanDeg <= 12 ? "✓ compressed" : "(target 5–12°)"
+              }`}
+        </span>
+        <span>Hip lead: {metrics.hipLeadIn > 0 ? "+" : ""}{metrics.hipLeadIn} in</span>
+      </div>
+    </section>
+  );
+}
+
 function MetricsTable({ analysis, frame }: { analysis: AnalysisResult; frame: number }) {
   const dev =
     analysis.deviations.find((d) => d.userFrame === frame) ??

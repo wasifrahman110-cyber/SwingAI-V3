@@ -215,18 +215,29 @@ def detect_faults(
             "(hold ≤ 165° until the shaft reaches horizontal) — the lag you built "
             f"at the top ({top_angle:.0f}°) was thrown away in the first half of the downswing.")
 
-    # 10) Chicken wing (lead elbow flexion > 35° post-impact)
+    # 10) Chicken wing — V5 leniency: lead-elbow flex must exceed 52° AND
+    #     persist for ≥ 3 consecutive frames post-impact. A single-frame
+    #     landmark blip or a normal folding release can never trigger it.
     el = (LEFT_SHOULDER, LEFT_ELBOW, LEFT_WRIST) if L else (RIGHT_SHOULDER, RIGHT_ELBOW, RIGHT_WRIST)
     elbow_angle = _sg(np.array([
         joint_angle_3d(frames[t, el[0], :3], frames[t, el[1], :3], frames[t, el[2], :3])
         for t in range(T)
     ]))
-    imp_win = elbow_angle[max(0, p.impact - 2): p.follow_through + 1]
-    wing_flex = 180.0 - float(np.min(imp_win))
-    if wing_flex > 35.0:
-        add("chicken_wing", "Chicken Wing", "major", "impact", wing_flex, 35.0, "deg",
-            f"Your lead elbow flexed {wing_flex:.0f}° through impact (tolerance ≤ 35°) — "
-            "the elbow must extend down the target line, not break outward.")
+    imp_win = elbow_angle[max(0, p.impact - 1): p.follow_through + 1]
+    flex_series = 180.0 - imp_win
+    run = 0
+    wing_fired = False
+    wing_peak = 0.0
+    for v in flex_series:
+        wing_peak = max(wing_peak, float(v))
+        run = run + 1 if v > 52.0 else 0
+        if run >= 3:
+            wing_fired = True
+    if wing_fired:
+        add("chicken_wing", "Chicken Wing", "major", "impact", wing_peak, 52.0, "deg",
+            f"Your lead elbow flexed {wing_peak:.0f}° through impact and held it for "
+            "3+ frames (tolerance ≤ 52° sustained) — the elbow must extend down the "
+            "target line, not break outward.")
 
     # 12) Flip / scoop at impact (wrist past neutral) — gated exactly like
     #     casting: only meaningful when a real wrist cock was measurable at

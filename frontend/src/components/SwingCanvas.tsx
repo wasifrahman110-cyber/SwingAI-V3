@@ -39,6 +39,10 @@ export interface SwingCanvasProps {
   video: HTMLVideoElement | null;
   referenceVideo: HTMLVideoElement | null;
   interactive: boolean; // false while the telestrator captures the pointer
+  /** Multi-angle mode: down-the-line clip rendered beside the face-on clip. */
+  multiView: boolean;
+  dtl: SwingSequence | null;
+  dtlVideo: HTMLVideoElement | null;
   onFrameChange: (frame: number) => void;
   onTogglePlay: () => void;
 }
@@ -215,7 +219,9 @@ export function SwingCanvas(props: SwingCanvasProps) {
     if (!userF) return;
 
     const dual = p.mode === "dual" && reference !== null;
-    const userPane: Pane = dual
+    const multi = p.multiView && p.dtl !== null;
+    const split = dual || multi;
+    const userPane: Pane = split
       ? { x: 0, y: 0, w: w / 2 - 1, h }
       : { x: 0, y: 0, w, h };
 
@@ -299,6 +305,24 @@ export function SwingCanvas(props: SwingCanvasProps) {
       ctx.fillText("YOU", 12, h - 12);
       ctx.fillStyle = "rgba(0,229,255,0.85)";
       ctx.fillText(`REF · F${String(refFi).padStart(3, "0")}`, w / 2 + 13, h - 12);
+    }
+
+    // down-the-line pane (multi-angle mode)
+    if (multi && p.dtl) {
+      const dtlPane: Pane = { x: w / 2 + 1, y: 0, w: w / 2 - 1, h };
+      drawBackdrop(ctx, dtlPane, p.dtlVideo, 29);
+      const Tdtl = p.dtl.frames.length;
+      const dtlFi = Math.max(0, Math.min(Tdtl - 1,
+        Math.round((fi / Math.max(T - 1, 1)) * (Tdtl - 1)) + p.frameOffset));
+      const dtlF = p.dtl.frames[dtlFi];
+      if (dtlF) drawSkeleton(ctx, dtlF, dtlPane, "#FFB800", new Set(), false);
+      ctx.fillStyle = "rgba(245,245,247,0.14)";
+      ctx.fillRect(w / 2 - 1, 0, 2, h);
+      ctx.font = "600 10px 'JetBrains Mono', monospace";
+      ctx.fillStyle = "rgba(163,194,147,0.85)";
+      ctx.fillText("FACE-ON", 12, h - 12);
+      ctx.fillStyle = "rgba(255,184,0,0.85)";
+      ctx.fillText(`DTL · F${String(dtlFi).padStart(3, "0")}`, w / 2 + 13, h - 12);
     }
 
     // phase watermark
