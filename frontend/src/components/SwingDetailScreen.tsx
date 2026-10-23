@@ -87,7 +87,11 @@ export function SwingDetailScreen({
   // telestrator state: history of annotation snapshots for undo/redo
   const [teleTool, setTeleTool] = useState<TelestratorTool>("off");
   const [teleColor, setTeleColor] = useState<string>(TELESTRATOR_COLORS[0]);
-  const [lockToFrame, setLockToFrame] = useState(true);
+  // V4.1: annotations PERSIST across playback by default (Global Overlay).
+  // Frame-lock is an explicit opt-in via the F/G toggle — the old default
+  // stamped drawings to the frame under the moving playhead, which made them
+  // vanish the instant the video advanced.
+  const [lockToFrame, setLockToFrame] = useState(false);
   const [history, setHistory] = useState<Annotation[][]>([[]]);
   const [histIdx, setHistIdx] = useState(0);
   const annotations = history[histIdx] ?? [];

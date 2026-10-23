@@ -88,14 +88,6 @@ DRILL_LIBRARY: Dict[str, DrillSpec] = {
         "Load into the trail hip at the top — upper body tilts away from, never toward, the target.",
         "3 × 10 mirror turns",
     ),
-    "flat_shoulder_turn": (
-        "Lead-Shoulder-Down Turn Drill",
-        ("Hold a club across your chest and bow into your address posture.",
-         "Turn back so the lead shoulder works DOWN toward the ball — the chest club should point at or just outside the ball at the top.",
-         "A turn that stays level with the ground is what tips the downswing over the top."),
-        "Shoulders turn on the incline your spine sets — lead shoulder down and under.",
-        "3 × 12 posture turns",
-    ),
     "casting": (
         "Pump Drill",
         ("Swing to the top, then pump down slowly to shaft-horizontal and PAUSE — the wrist angle must still be ~90°.",
@@ -111,14 +103,6 @@ DRILL_LIBRARY: Dict[str, DrillSpec] = {
          "The cover may only fall once both arms are fully released past the ball."),
         "Lead arm stays connected and EXTENDS through impact instead of breaking outward.",
         "20 balls at 50%, then 10 at 75%",
-    ),
-    "lead_arm_breakdown": (
-        "Headcover-Between-Forearms Width Drill",
-        ("Hold a headcover between your forearms and make backswing turns.",
-         "If the lead elbow bends, the cover drops — keep the triangle intact to the top.",
-         "Width in the backswing is stored radius; a bent lead arm shrinks the whole arc."),
-        "Keep the lead arm long — width at the top equals speed at the bottom.",
-        "3 × 10 turns",
     ),
     "flip_scoop": (
         "Impact-Bag Compression Drill",
@@ -191,14 +175,6 @@ DRILL_LIBRARY: Dict[str, DrillSpec] = {
          "The heel releases naturally AFTER impact as the body rotates through."),
         "Use the ground: the trail heel stays down while pressure drives forward.",
         "15 balls at 60%",
-    ),
-    "hanging_back": (
-        "Step-Through Finish Drill",
-        ("Hit a ball, and immediately after impact let the trail foot STEP forward past the lead foot, walking toward the target.",
-         "It is impossible to step through while hanging back — pressure must reach the lead side first.",
-         "Force-plate data: tour players have 75-90% of pressure on the lead foot AT impact and 98-100% in the finish. Match that feel."),
-        "Weight arrives on the lead side BEFORE the ball is struck — finish walking toward the target.",
-        "15 step-through swings",
     ),
     "kinematic_sequence": (
         "Step-Change-of-Direction Drill",

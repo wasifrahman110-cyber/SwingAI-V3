@@ -100,7 +100,6 @@ export function detectFaults18(
   const hipX = midSeries(F, LM.LEFT_HIP, LM.RIGHT_HIP, 0).map((v) => v * sign);
   const shoX = midSeries(F, LM.LEFT_SHOULDER, LM.RIGHT_SHOULDER, 0).map((v) => v * sign);
   const leadAnkleX = at(F, p.setup, L ? LM.LEFT_ANKLE : LM.RIGHT_ANKLE)[0] * sign;
-  const trailAnkleX = at(F, p.setup, L ? LM.RIGHT_ANKLE : LM.LEFT_ANKLE)[0] * sign;
   const trailHeelY = series(F, L ? LM.RIGHT_HEEL : LM.LEFT_HEEL, 1);
   const leadKneeX = series(F, L ? LM.LEFT_KNEE : LM.RIGHT_KNEE, 0).map((v) => v * sign);
 
@@ -109,10 +108,22 @@ export function detectFaults18(
   const midDown = p.downswing;
 
   // ---- 1. HEAD & SPINE --------------------------------------------------
-  const headSwayIn = Math.abs((headX[p.top_of_backswing] as number) - (headX[p.setup] as number)) / IN;
-  if (headSwayIn > 3.5) {
-    add("head_sway", "Head Sway", "major", "top_of_backswing", headSwayIn, 3.5, "in",
-      `Your head drifted ${headSwayIn.toFixed(1)} in laterally between address and the top (tolerance ≤ 3.5 in). A stable head is the axis of the coil.`);
+  // Head sway — loosened to 4.5 in AND required to be SUSTAINED (> 3
+  // consecutive frames) so single-frame landmark jumps never flag.
+  {
+    let run = 0;
+    let sustained = false;
+    let peak = 0;
+    for (let t = p.setup; t <= p.top_of_backswing && t < headX.length; t++) {
+      const dev = Math.abs((headX[t] as number) - (headX[p.setup] as number)) / IN;
+      peak = Math.max(peak, dev);
+      run = dev > 4.5 ? run + 1 : 0;
+      if (run > 3) sustained = true;
+    }
+    if (sustained) {
+      add("head_sway", "Head Sway", "major", "top_of_backswing", peak, 4.5, "in",
+        `Your head drifted ${peak.toFixed(1)} in laterally between address and the top (tolerance ≤ 4.5 in, sustained). A stable head is the axis of the coil.`);
+    }
   }
 
   const liftIn = (maxIn(headY, downLo, downHi) - (headY[p.setup] as number)) / IN;
@@ -134,18 +145,6 @@ export function detectFaults18(
   }
 
   // ---- 2. SHOULDERS & TORSO ---------------------------------------------
-  const planeAtTop = (() => {
-    const l = at(F, p.top_of_backswing, LM.LEFT_SHOULDER);
-    const r = at(F, p.top_of_backswing, LM.RIGHT_SHOULDER);
-    const dy = Math.abs(l[1] - r[1]);
-    const len = Math.max(Math.hypot(l[0] - r[0], l[1] - r[1], l[2] - r[2]), 1e-9);
-    return (Math.asin(Math.min(1, dy / len)) * 180) / Math.PI;
-  })();
-  if (planeAtTop < 30) {
-    add("flat_shoulder_turn", "Flat Shoulder Turn", "minor", "top_of_backswing", planeAtTop, 30, "deg",
-      `Your shoulder plane measured ${planeAtTop.toFixed(0)}° at the top (target ≥ 30°) — a flat turn tips the swing over the top.`);
-  }
-
   const leanIn =
     ((shoX[p.top_of_backswing] as number) - (hipX[p.top_of_backswing] as number)
       - ((shoX[p.setup] as number) - (hipX[p.setup] as number))) / IN;
@@ -155,9 +154,9 @@ export function detectFaults18(
   }
 
   const rotRange = Math.max(...m.shoulderRotationDeg.map(Math.abs));
-  if (rotRange > 110) {
-    add("overswing", "Overswing", "major", "top_of_backswing", rotRange, 110, "deg",
-      `Your shoulders turned ${rotRange.toFixed(0)}° (optimal coil ≤ 110°) — past parallel the structure breaks down.`);
+  if (rotRange > 125) {
+    add("overswing", "Overswing", "major", "top_of_backswing", rotRange, 125, "deg",
+      `Your shoulders turned ${rotRange.toFixed(0)}° (tolerance ≤ 125°, camera-perspective safe) — past parallel the structure breaks down.`);
   }
 
   const shoRange = Math.abs((m.shoulderRotationDeg[p.impact] as number) - (m.shoulderRotationDeg[p.top_of_backswing] as number)) || 1e-9;
@@ -178,10 +177,38 @@ export function detectFaults18(
   const cock = signedWristCock(F, L, p.top_of_backswing);
   const wristAngle = cock.map((c) => 180 - Math.abs(c));
 
-  const castMax = maxIn(wristAngle, downLo + 1, Math.max(downLo + 2, midDown + 1));
-  if (castMax > 140) {
-    add("casting", "Casting / Early Release", "critical", "downswing", castMax, 140, "deg",
-      `Your wrist angle opened to ${castMax.toFixed(0)}° in the first half of the downswing (hold ≤ 140°) — throwing the lag away costs the speed multiplier.`);
+  // Casting / early release — REFACTORED (V4.1): theta = arccos(v_f·v_h /
+  // |v_f||v_h|), evaluated ONLY between the top and mid-downswing (P5 proxy),
+  // never at the top itself or post-impact. Threshold 165° (15° grace below
+  // full extension). GATE: if no wrist cock was measurable at the top (angle
+  // already ~180°, e.g. hand landmarks unresolved on real footage) the metric
+  // is meaningless and the rule stays silent — the fix for the false 179.5°
+  // "cast" on tour benchmark video.
+  // Hand-landmark resolution gate: if the hand centroid sits essentially ON
+  // the wrist (< 1.2 in separation), the hand direction is tracking noise and
+  // every wrist-angle metric is meaningless — casting AND flip stay silent.
+  const handsIdx = L ? [LM.LEFT_PINKY, LM.LEFT_INDEX, LM.LEFT_THUMB] : [LM.RIGHT_PINKY, LM.RIGHT_INDEX, LM.RIGHT_THUMB];
+  const wrIdx = L ? LM.LEFT_WRIST : LM.RIGHT_WRIST;
+  let sepSum = 0;
+  for (let t = 0; t < T; t++) {
+    const w = at(F, t, wrIdx);
+    let hx = 0, hy = 0, hz = 0;
+    for (const h of handsIdx) {
+      const pt = at(F, t, h);
+      hx += pt[0] / 3; hy += pt[1] / 3; hz += pt[2] / 3;
+    }
+    sepSum += Math.hypot(hx - w[0], hy - w[1], hz - w[2]);
+  }
+  const handsResolved = sepSum / Math.max(T, 1) > 1.2 * IN;
+
+  const topAngle =
+    ((wristAngle[Math.max(0, p.top_of_backswing - 1)] as number) +
+      (wristAngle[p.top_of_backswing] as number) +
+      (wristAngle[Math.min(wristAngle.length - 1, p.top_of_backswing + 1)] as number)) / 3;
+  const castMax = maxIn(wristAngle, downLo + 2, Math.max(downLo + 3, midDown + 1));
+  if (handsResolved && topAngle < 150 && castMax > 165) {
+    add("casting", "Casting / Early Release", "critical", "downswing", castMax, 165, "deg",
+      `Your wrist angle opened to ${castMax.toFixed(0)}° before mid-downswing (hold ≤ 165° until the shaft reaches horizontal) — the lag you built at the top (${topAngle.toFixed(0)}°) was thrown away early.`);
   }
 
   const elTriple = L
@@ -197,14 +224,10 @@ export function detectFaults18(
       `Your lead elbow flexed ${wingFlex.toFixed(0)}° through impact (tolerance ≤ 35°) — it must extend down the target line, not break outward.`);
   }
 
-  const backFlex = 180 - minIn(elbowAngle, p.setup + 1, p.top_of_backswing + 1);
-  if (backFlex > 15) {
-    add("lead_arm_breakdown", "Lead Arm Breakdown", "minor", "top_of_backswing", backFlex, 15, "deg",
-      `Your lead arm bent ${backFlex.toFixed(0)}° in the backswing (tolerance ≤ 15°) — a soft lead arm shrinks the arc.`);
-  }
-
+  // Flip/scoop — gated exactly like casting: only meaningful when a real
+  // wrist cock was measurable at the top.
   const flipDeg = minIn(cock, Math.max(0, p.impact - 1), p.impact + 2);
-  if (flipDeg < -10) {
+  if (handsResolved && topAngle < 150 && flipDeg < -10) {
     add("flip_scoop", "Flip / Scoop at Impact", "critical", "impact", Math.abs(flipDeg), 10, "deg",
       `Your wrists flipped ${Math.abs(flipDeg).toFixed(0)}° past neutral at contact — loft is added instead of compressed.`);
   }
@@ -243,22 +266,15 @@ export function detectFaults18(
 
   // ---- 5. LEGS, KNEES & WEIGHT --------------------------------------------
   const heelRiseIn = (maxIn(trailHeelY, downLo, midDown + 1) - (trailHeelY[p.setup] as number)) / IN;
-  if (heelRiseIn > 1.0) {
-    add("trail_heel_lift", "Premature Trail Heel Lift", "minor", "downswing", heelRiseIn, 1.0, "in",
-      `Your trail heel rose ${heelRiseIn.toFixed(1)} in early in the downswing (tolerance ≤ 1.0 in) — stay grounded.`);
+  if (heelRiseIn > 2.5) {
+    add("trail_heel_lift", "Premature Trail Heel Lift", "minor", "downswing", heelRiseIn, 2.5, "in",
+      `Your trail heel rose ${heelRiseIn.toFixed(1)} in early in the downswing (tolerance ≤ 2.5 in) — stay grounded.`);
   }
 
   const collapseIn = ((leadKneeX[p.setup] as number) - minIn(leadKneeX, p.setup, p.top_of_backswing + 1)) / IN;
   if (collapseIn > 2.0) {
     add("lead_knee_collapse", "Lead Knee Collapse", "major", "top_of_backswing", collapseIn, 2.0, "in",
       `Your lead knee dove ${collapseIn.toFixed(1)} in toward the trail leg in the backswing (tolerance ≤ 2.0 in).`);
-  }
-
-  const span = leadAnkleX - trailAnkleX || 1e-9;
-  const trailWeight = ((leadAnkleX - (hipX[p.impact] as number)) / span) * 100;
-  if (trailWeight > 55) {
-    add("hanging_back", "Hanging Back", "major", "impact", trailWeight, 55, "%",
-      `${trailWeight.toFixed(0)}% of your weight was still over the trail foot at impact (target ≤ 55%).`);
   }
 
   // ---- V2 carry-overs ------------------------------------------------------
@@ -288,10 +304,10 @@ export function detectFaults18(
 export function faultGroup(code: string): string {
   const groups: ReadonlyArray<readonly [string, readonly string[]]> = [
     ["Head & Spine", ["head_sway", "head_lift", "head_dip", "spine_retention"]],
-    ["Shoulders & Torso", ["flat_shoulder_turn", "reverse_spine", "overswing", "shoulder_snatch"]],
-    ["Arms & Wrists", ["casting", "chicken_wing", "lead_arm_breakdown", "flip_scoop"]],
+    ["Shoulders & Torso", ["reverse_spine", "overswing", "shoulder_snatch"]],
+    ["Arms & Wrists", ["casting", "chicken_wing", "flip_scoop"]],
     ["Hips & Pelvis", ["hip_slide", "early_extension", "hip_stall", "sway"]],
-    ["Legs & Weight", ["trail_heel_lift", "lead_knee_collapse", "hanging_back"]],
+    ["Legs & Weight", ["trail_heel_lift", "lead_knee_collapse"]],
     ["Sequencing", ["kinematic_sequence"]],
   ];
   for (const [name, codes] of groups) if (codes.includes(code)) return name;

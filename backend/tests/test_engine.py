@@ -227,6 +227,28 @@ def main() -> int:
                 all(seq_noisy["window"]["start"] <= f <= seq_noisy["window"]["end"]
                     for f in seq_noisy["peak_frames"].values()))
 
+    # --- V4.1 regression: tour-benchmark casting false positive ----------
+    # On real footage MediaPipe hand landmarks often barely separate from the
+    # wrist, so the measured wrist angle sits near 180° for the WHOLE swing
+    # (the 179.5° "cast" seen on the Tiger benchmark). Simulate that by
+    # collapsing the hand landmarks onto the wrist: casting must stay silent
+    # because no cock was ever measurable at the top.
+    degenerate = pro_raw.copy()
+    for h_lm, w_lm in ((M.LEFT_PINKY, M.LEFT_WRIST), (M.LEFT_INDEX, M.LEFT_WRIST),
+                       (M.LEFT_THUMB, M.LEFT_WRIST)):
+        degenerate[:, h_lm, :3] = degenerate[:, w_lm, :3] + np.array([0.004, 0.001, 0.0])
+    deg_n = norm.normalize(degenerate)
+    deg_m = compute_metrics(deg_n.frames)
+    deg_ph = segment_phases(deg_n.frames)
+    deg_codes = {f.code for f in detect_faults(deg_n.frames, deg_m, deg_ph)}
+    ok &= check(f"unresolved-hands benchmark: no casting/flip false positives ({deg_codes or 'none'})",
+                not ({"casting", "flip_scoop"} & deg_codes))
+
+    # --- V4.1: removed rules can never fire -------------------------------
+    removed = {"flat_shoulder_turn", "lead_arm_breakdown", "hanging_back"}
+    ok &= check("removed rules absent from all outputs",
+                not (removed & (codes | clean_codes | deg_codes)))
+
     drills = recommend_drills(faults)
     ok &= check("every fault maps to a drill card", len(drills) == len(faults))
     ok &= check("drill markdown carries targets",

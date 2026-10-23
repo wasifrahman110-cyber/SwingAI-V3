@@ -76,9 +76,15 @@ export function TelestratorCanvas(props: TelestratorProps) {
     if (!ctx) return;
     let raf = 0;
 
+    // Persistence contract (V4.1): the canvas buffer is cleared and FULLY
+    // REDRAWN from the annotations state on every animation frame — video
+    // playback, scrubbing, and pointer events can never erase a stored
+    // drawing. Only the user's explicit Clear button empties the state.
+    // Global annotations (frame === null) render on every frame; frame-locked
+    // ones render within a ±1-frame tolerance so scrub jitter can't hide them.
     const visible = (a: Annotation): boolean => {
       const p = propsRef.current;
-      return a.frame === null || a.frame === p.frame;
+      return a.frame === null || Math.abs(a.frame - p.frame) <= 1;
     };
 
     const drawAnnotation = (a: Annotation, w: number, h: number, isDraft: boolean) => {

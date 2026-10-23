@@ -1,9 +1,10 @@
 """
 SwingAI V3 — comprehensive biomechanical diagnostic matrix.
 
-18 fault rules across five body groups (head/spine, shoulder/torso,
+V4.1: 15 fault rules across five body groups (head/spine, shoulder/torso,
 arms/wrists, hips/pelvis, legs/weight), layered on top of the V2 rules
-(backswing sway, kinematic sequence) for a 20-rule suite.
+(backswing sway, kinematic sequence) for a 17-rule suite. (Flat Shoulder Turn, Lead Arm Breakdown, and
+Hanging Back were permanently removed — flawed math / false-positive prone.)
 
 Every rule is SELF-CONTAINED (measured against the golfer's own address and
 published biomechanical tolerances, never a reference swing), runs on
@@ -105,12 +106,22 @@ def detect_faults(
     down_lo, down_hi = p.top_of_backswing, p.impact + 1
 
     # ---------------- 1. HEAD & SPINE AXIS --------------------------------
-    # 1) Head sway (address -> top)
-    sway_in = abs(head_x[p.top_of_backswing] - head_x[p.setup]) / IN
-    if sway_in > 3.5:
-        add("head_sway", "Head Sway", "major", "top_of_backswing", sway_in, 3.5, "in",
+    # 1) Head sway (address -> top) — loosened to 4.5 in AND required to be
+    #    SUSTAINED (> 3 consecutive frames) so a single-frame landmark jump
+    #    can never flag an athletic tour move.
+    head_dev = np.abs(head_x[p.setup: p.top_of_backswing + 1] - head_x[p.setup]) / IN
+    run = 0
+    sustained = False
+    for v in head_dev:
+        run = run + 1 if v > 4.5 else 0
+        if run > 3:
+            sustained = True
+            break
+    sway_in = float(np.max(head_dev)) if len(head_dev) else 0.0
+    if sustained:
+        add("head_sway", "Head Sway", "major", "top_of_backswing", sway_in, 4.5, "in",
             f"Your head drifted {sway_in:.1f} in laterally between address and the top "
-            "(tolerance ≤ 3.5 in). A stable head is the axis of the coil.")
+            "(tolerance ≤ 4.5 in, sustained). A stable head is the axis of the coil.")
 
     # 2) Early head lift (standing up before impact)
     lift_in = float(np.max(head_y[down_lo:down_hi]) - head_y[p.setup]) / IN
@@ -134,19 +145,6 @@ def detect_faults(
             "(tolerance ≤ 8°).")
 
     # ---------------- 2. SHOULDER PLANE & TORSO ---------------------------
-    sho_line = frames[:, LEFT_SHOULDER, :3] - frames[:, RIGHT_SHOULDER, :3]
-    dy = _sg(sho_line[:, 1])
-    length = np.maximum(np.linalg.norm(sho_line, axis=1), 1e-9)
-    plane_deg = np.degrees(np.arcsin(np.clip(np.abs(dy) / length, 0, 1)))
-
-    # 5) Flat shoulder turn at the top
-    plane_at_top = float(plane_deg[p.top_of_backswing])
-    if plane_at_top < 30.0:
-        add("flat_shoulder_turn", "Flat Shoulder Turn", "minor", "top_of_backswing",
-            plane_at_top, 30.0, "deg",
-            f"Your shoulder plane measured {plane_at_top:.0f}° at the top (target ≥ 30°) — "
-            "a flat turn tips the swing over the top.")
-
     # 6) Reverse spine angle (upper body leaning toward the target at the top)
     lean_in = ((sho_x[p.top_of_backswing] - hip_x[p.top_of_backswing])
                - (sho_x[p.setup] - hip_x[p.setup])) / IN
@@ -158,9 +156,9 @@ def detect_faults(
 
     # 7) Overswing
     rot_range = float(np.max(np.abs(metrics.shoulder_rotation_deg)))
-    if rot_range > 110.0:
-        add("overswing", "Overswing", "major", "top_of_backswing", rot_range, 110.0, "deg",
-            f"Your shoulders turned {rot_range:.0f}° (optimal coil ≤ 110°) — past parallel "
+    if rot_range > 125.0:
+        add("overswing", "Overswing", "major", "top_of_backswing", rot_range, 125.0, "deg",
+            f"Your shoulders turned {rot_range:.0f}° (tolerance ≤ 125°, camera-perspective safe) — past parallel "
             "the structure breaks down before the downswing even starts.")
 
     # 8) Lead shoulder snatch (shoulders fire before the hips in transition)
@@ -190,13 +188,32 @@ def detect_faults(
     cock = cock * pol
     wrist_angle = 180.0 - np.abs(cock)  # interior forearm-club angle
 
-    # 9) Casting / early release (before the shaft-horizontal proxy = mid-downswing)
-    cast_win = wrist_angle[down_lo + 1: max(down_lo + 2, mid_down + 1)]
+    # 9) Casting / early release — REFACTORED (V4.1):
+    #    theta = arccos(v_forearm · v_hand / |v_forearm||v_hand|), evaluated
+    #    ONLY between the top and mid-downswing (P5, shaft-parallel proxy) —
+    #    never at the top itself or post-impact. Threshold 165° (= 15° grace
+    #    below full extension) so normal tour uncocking passes untouched.
+    #    GATE: if no wrist cock was ever measurable at the top (angle already
+    #    near 180°, e.g. hand landmarks unresolved on real footage), the
+    #    metric is meaningless and the rule stays silent — this is what fired
+    #    a false 179.5° "cast" on tour benchmark video.
+    # Hand-landmark resolution gate: if the hand centroid sits essentially ON
+    # the wrist (< 1.2 in separation), the hand direction is tracking noise and
+    # every wrist-angle metric is meaningless — casting AND flip stay silent.
+    hands_idx = (LEFT_PINKY, LEFT_INDEX, LEFT_THUMB) if L else (RIGHT_PINKY, RIGHT_INDEX, RIGHT_THUMB)
+    wr_idx = LEFT_WRIST if L else RIGHT_WRIST
+    hand_sep = float(np.mean(np.linalg.norm(
+        frames[:, hands_idx, :3].mean(axis=1) - frames[:, wr_idx, :3], axis=1)))
+    hands_resolved = hand_sep > 1.2 * IN
+
+    top_angle = float(np.mean(wrist_angle[max(0, p.top_of_backswing - 1): p.top_of_backswing + 2]))
+    cast_win = wrist_angle[down_lo + 2: max(down_lo + 3, mid_down + 1)]
     cast_max = float(np.max(cast_win)) if len(cast_win) else 0.0
-    if cast_max > 140.0:
-        add("casting", "Casting / Early Release", "critical", "downswing", cast_max, 140.0, "deg",
-            f"Your wrist angle opened to {cast_max:.0f}° in the first half of the downswing "
-            "(hold ≤ 140°) — throwing the lag away costs the entire speed multiplier.")
+    if hands_resolved and top_angle < 150.0 and cast_max > 165.0:
+        add("casting", "Casting / Early Release", "critical", "downswing", cast_max, 165.0, "deg",
+            f"Your wrist angle opened to {cast_max:.0f}° before mid-downswing "
+            "(hold ≤ 165° until the shaft reaches horizontal) — the lag you built "
+            f"at the top ({top_angle:.0f}°) was thrown away in the first half of the downswing.")
 
     # 10) Chicken wing (lead elbow flexion > 35° post-impact)
     el = (LEFT_SHOULDER, LEFT_ELBOW, LEFT_WRIST) if L else (RIGHT_SHOULDER, RIGHT_ELBOW, RIGHT_WRIST)
@@ -211,18 +228,11 @@ def detect_faults(
             f"Your lead elbow flexed {wing_flex:.0f}° through impact (tolerance ≤ 35°) — "
             "the elbow must extend down the target line, not break outward.")
 
-    # 11) Lead arm breakdown in the backswing (flex > 15°)
-    back_win = elbow_angle[p.setup + 1: p.top_of_backswing + 1]
-    back_flex = 180.0 - float(np.min(back_win)) if len(back_win) else 0.0
-    if back_flex > 15.0:
-        add("lead_arm_breakdown", "Lead Arm Breakdown", "minor", "top_of_backswing",
-            back_flex, 15.0, "deg",
-            f"Your lead arm bent {back_flex:.0f}° in the backswing (tolerance ≤ 15°) — "
-            "a soft lead arm shrinks the swing radius and arc width.")
-
-    # 12) Flip / scoop at impact (wrist past neutral)
+    # 12) Flip / scoop at impact (wrist past neutral) — gated exactly like
+    #     casting: only meaningful when a real wrist cock was measurable at
+    #     the top; unresolved hand landmarks stay silent.
     flip_deg = float(np.min(cock[max(0, p.impact - 1): p.impact + 2]))
-    if flip_deg < -10.0:
+    if hands_resolved and top_angle < 150.0 and flip_deg < -10.0:
         add("flip_scoop", "Flip / Scoop at Impact", "critical", "impact",
             abs(flip_deg), 10.0, "deg",
             f"Your wrists flipped {abs(flip_deg):.0f}° past neutral at contact — dynamic "
@@ -266,11 +276,11 @@ def detect_faults(
     # ---------------- 5. LEGS, KNEES & WEIGHT -----------------------------
     # 16) Premature trail heel lift (before mid-downswing)
     heel_rise_in = (float(np.max(trail_heel_y[down_lo: mid_down + 1])) - float(trail_heel_y[p.setup])) / IN
-    if heel_rise_in > 1.0:
+    if heel_rise_in > 2.5:
         add("trail_heel_lift", "Premature Trail Heel Lift", "minor", "downswing",
-            heel_rise_in, 1.0, "in",
+            heel_rise_in, 2.5, "in",
             f"Your trail heel rose {heel_rise_in:.1f} in early in the downswing "
-            "(tolerance ≤ 1.0 in) — stay grounded to keep pressure driving forward.")
+            "(tolerance ≤ 2.5 in) — stay grounded to keep pressure driving forward.")
 
     # 17) Lead knee collapse in the backswing (toward the trail leg)
     knee_win = lead_knee_x[p.setup: p.top_of_backswing + 1]
@@ -280,14 +290,6 @@ def detect_faults(
             collapse_in, 2.0, "in",
             f"Your lead knee dove {collapse_in:.1f} in toward the trail leg in the backswing "
             "(tolerance ≤ 2.0 in) — keep its flex stable to preserve the lower-body coil.")
-
-    # 18) Hanging back (weight over the trail foot at impact)
-    span = (lead_ankle_x - trail_ankle_x) or 1e-9
-    trail_weight = (lead_ankle_x - float(hip_x[p.impact])) / span * 100.0
-    if trail_weight > 55.0:
-        add("hanging_back", "Hanging Back", "major", "impact", trail_weight, 55.0, "%",
-            f"{trail_weight:.0f}% of your weight was still over the trail foot at impact "
-            "(target ≤ 55%) — pressure must move into the lead side before the strike.")
 
     # ---------------- V2 carry-overs --------------------------------------
     # Backswing sway (lateral drift away from target)
@@ -315,10 +317,10 @@ def detect_faults(
 def group_of(code: str) -> str:
     groups: List[Tuple[str, Tuple[str, ...]]] = [
         ("Head & Spine", ("head_sway", "head_lift", "head_dip", "spine_retention")),
-        ("Shoulders & Torso", ("flat_shoulder_turn", "reverse_spine", "overswing", "shoulder_snatch")),
-        ("Arms & Wrists", ("casting", "chicken_wing", "lead_arm_breakdown", "flip_scoop")),
+        ("Shoulders & Torso", ("reverse_spine", "overswing", "shoulder_snatch")),
+        ("Arms & Wrists", ("casting", "chicken_wing", "flip_scoop")),
         ("Hips & Pelvis", ("hip_slide", "early_extension", "hip_stall", "sway")),
-        ("Legs & Weight", ("trail_heel_lift", "lead_knee_collapse", "hanging_back")),
+        ("Legs & Weight", ("trail_heel_lift", "lead_knee_collapse")),
         ("Sequencing", ("kinematic_sequence",)),
     ]
     for name, codes in groups:
