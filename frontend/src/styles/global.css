@@ -1155,6 +1155,46 @@ input[type="range"]::-moz-range-thumb {
   cursor: default;
 }
 
+/* ---------- V4: drill meta + body-group tags ---------- */
+.group-tag {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--card-3);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+.drill-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 4px 0 12px;
+}
+.drill-meta-chip {
+  font-size: 12px;
+  line-height: 1.45;
+  padding: 8px 12px;
+  border-radius: 10px;
+}
+.drill-meta-chip.focus {
+  background: var(--accent-ghost);
+  color: var(--accent);
+  border: 1px solid rgba(163, 194, 147, 0.3);
+}
+.drill-meta-chip.reps {
+  background: var(--card-3);
+  color: var(--text-dim);
+  border: 1px solid var(--line-soft);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
 /* glassmorphism on floating layers */
 .drill-sheet,
 .upload-menu {

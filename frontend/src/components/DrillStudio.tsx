@@ -9,41 +9,19 @@
 
 import type { AnalysisResult } from "../types/pose.ts";
 import { REFERENCE_LIBRARY } from "../lib/demoData.ts";
+import { DRILL_LIBRARY } from "../engine/drills.ts";
+import { faultGroup } from "../engine/diagnostics.ts";
 import { renderMarkdown } from "../lib/markdown.tsx";
 import { useState } from "react";
 
-const FULL_LIBRARY: ReadonlyArray<{ code: string; name: string; fixes: string; how: string }> = [
-  {
-    code: "early_extension",
-    name: "Chair Drill (Butt-Back Wall Drill)",
-    fixes: "Early Extension",
-    how: "Glutes stay on a chair/wall through the downswing; trail glute still brushing at impact.",
-  },
-  {
-    code: "chicken_wing",
-    name: "Glove Under Armpit Drill",
-    fixes: "Chicken Wing",
-    how: "Pin a glove under the lead armpit through half-shots; it only drops after both arms extend.",
-  },
-  {
-    code: "sway",
-    name: "Crossed-Arms Stance Pivot Drill",
-    fixes: "Hip Sway",
-    how: "Arms crossed, rotate to the top keeping the trail hip inside the trail ankle.",
-  },
-  {
-    code: "spine_retention",
-    name: "Head-on-Wall Posture Drill",
-    fixes: "Spine-Angle Loss",
-    how: "Forehead lightly on a pad; rehearse full turns without losing contact.",
-  },
-  {
-    code: "kinematic_sequence",
-    name: "Step-Change-of-Direction Drill",
-    fixes: "Sequence Order",
-    how: "Feet together, swing to the top, step toward the target to force the lower body to fire first.",
-  },
-];
+/** The full V4 drill library — one entry per detectable fault code. */
+const FULL_LIBRARY = Object.entries(DRILL_LIBRARY).map(([code, spec]) => ({
+  code,
+  name: spec.title,
+  group: faultGroup(code),
+  focus: spec.focusKey,
+  reps: spec.recommendedReps,
+}));
 
 interface DrillStudioProps {
   analysis: AnalysisResult | null;
@@ -83,17 +61,18 @@ export function DrillStudio({ analysis, onLoadReference }: DrillStudioProps) {
         </section>
       ))}
 
-      <div className="studio-sub">Full drill library</div>
+      <div className="studio-sub">Full drill library · {FULL_LIBRARY.length} drills</div>
       {FULL_LIBRARY.map((d) => (
         <section className="line-section" key={d.code}>
           <div className="studio-lib-row">
             <div>
               <div className="fix-name">
                 {d.name}
+                <span className="group-tag">{d.group}</span>
                 {matchedCodes.has(d.code) && <span className="pill accent">active</span>}
               </div>
-              <div className="fix-metric">fixes: {d.fixes}</div>
-              <p className="studio-how">{d.how}</p>
+              <p className="studio-how">{d.focus}</p>
+              <div className="fix-metric">{d.reps}</div>
             </div>
           </div>
         </section>

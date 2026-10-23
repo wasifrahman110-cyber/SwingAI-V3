@@ -129,6 +129,11 @@ export interface DrillCard {
   readonly faultCode: string;
   readonly drillName: string;
   readonly markdown: string;
+  /** Structured drill fields (additive — markdown remains the full card). */
+  readonly title?: string;
+  readonly description?: string;
+  readonly focusKey?: string;
+  readonly recommendedReps?: string;
 }
 
 export interface KinematicSequence {

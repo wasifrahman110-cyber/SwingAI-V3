@@ -1,5 +1,5 @@
 /**
- * Bottom navigation (V2): Home · Journal · (+) analyze · Drill Studio · Progress.
+ * Bottom navigation: Home · Swing Journal · (+) analyze · Drill Studio · Progress.
  * The player opens from Home, uploads, or the session library.
  */
 

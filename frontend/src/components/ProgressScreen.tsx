@@ -19,6 +19,21 @@ const FAULT_LABELS: Record<string, string> = {
   sway: "Sway",
   spine_retention: "Spine Loss",
   kinematic_sequence: "Sequence",
+  head_sway: "Head Sway",
+  head_lift: "Head Lift",
+  head_dip: "Head Dip",
+  flat_shoulder_turn: "Flat Turn",
+  reverse_spine: "Rev. Spine",
+  overswing: "Overswing",
+  shoulder_snatch: "Snatch",
+  casting: "Casting",
+  lead_arm_breakdown: "Arm Bend",
+  flip_scoop: "Flip",
+  hip_slide: "Hip Slide",
+  hip_stall: "Hip Stall",
+  trail_heel_lift: "Heel Lift",
+  lead_knee_collapse: "Knee Dive",
+  hanging_back: "Hang Back",
 };
 
 function TrendChart({ sessions }: { sessions: readonly SessionRecord[] }) {

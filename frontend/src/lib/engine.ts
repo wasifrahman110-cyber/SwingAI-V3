@@ -20,6 +20,8 @@ import type {
   WarpStep,
 } from "../types/pose.ts";
 import { LM } from "../types/pose.ts";
+import { detectFaults18 } from "../engine/diagnostics.ts";
+import { DRILL_LIBRARY, GENERIC_DRILL } from "../engine/drills.ts";
 import {
   angleBetweenDeg,
   argmax,
@@ -35,7 +37,6 @@ import {
   type Vec3,
 } from "./vectorMath.ts";
 
-const PLAYER_HEIGHT_IN = 70;
 
 // ---------------------------------------------------------------------------
 // Normalization
@@ -444,123 +445,7 @@ export function deviationMatrix(
   });
 }
 
-const window_ = (s: readonly number[], a: number, b: number): number[] => {
-  const start = clamp(a, 0, s.length - 1);
-  const end = clamp(b, start + 1, s.length);
-  return s.slice(start, end) as number[];
-};
 
-/**
- * Fault detection is fully SELF-CONTAINED: every rule measures the golfer
- * against biomechanical tolerances (posture deltas from their own address),
- * never against a reference swing — single-swing mode gets the identical
- * fault set, and a clean swing analyzed alone produces zero false positives.
- */
-export function detectFaults(user: SwingMetrics, userPhases: Phases): Fault[] {
-  const faults: Fault[] = [];
-  const p = userPhases;
-
-  // 1) Early extension
-  const thrustWin = window_(user.hipThrust, p.top_of_backswing, p.impact + 1);
-  const setupThrust = user.hipThrust[p.setup] as number;
-  const thrustIn =
-    Math.max(...thrustWin.map((v) => Math.abs(v - setupThrust))) * PLAYER_HEIGHT_IN;
-  const spineGain =
-    (user.spineAngleDeg[p.impact] as number) -
-    (user.spineAngleDeg[p.top_of_backswing] as number);
-  if (thrustIn > 3.2 || spineGain > 8) {
-    faults.push({
-      code: "early_extension",
-      name: "Early Extension",
-      severity: "critical",
-      phase: "downswing",
-      measured: Math.round(Math.max(thrustIn, 0) * 10) / 10,
-      target: 2.0,
-      unit: "in",
-      summary: `Your hips moved ${thrustIn.toFixed(1)} in toward the ball during the downswing and your spine angle rose ${Math.max(spineGain, 0).toFixed(1)}°. This forces a stand-up delivery and blocks rotation.`,
-    });
-  }
-
-  // 2) Chicken wing
-  const impactWin = window_(user.leadArmAngleDeg, p.impact - 2, p.follow_through + 1);
-  const impactMin = Math.min(...impactWin);
-  if (impactMin < 155) {
-    faults.push({
-      code: "chicken_wing",
-      name: "Chicken Wing (Lead-Elbow Breakdown)",
-      severity: "major",
-      phase: "impact",
-      measured: Math.round(impactMin * 10) / 10,
-      target: 165,
-      unit: "deg",
-      summary: `Your lead elbow collapsed to ${impactMin.toFixed(0)}° through impact (target ≥ 165°). The bend robs width, loft control, and speed.`,
-    });
-  }
-
-  // 3) Sway
-  const swayWin = window_(user.hipSway, p.setup, p.top_of_backswing + 1);
-  const swayIn = -Math.min(...swayWin) * PLAYER_HEIGHT_IN;
-  if (swayIn > 2.5) {
-    faults.push({
-      code: "sway",
-      name: "Hip Sway",
-      severity: "major",
-      phase: "top_of_backswing",
-      measured: Math.round(swayIn * 10) / 10,
-      target: 2.5,
-      unit: "in",
-      summary: `Your hips slid ${swayIn.toFixed(1)} in away from the target in the backswing (target ≤ 2.5 in). Sway kills the coil and makes low-point control random.`,
-    });
-  }
-
-  // 4) Spine retention — posture delta from the golfer's OWN address:
-  //    |theta_impact − theta_setup| must stay ≤ 8°. (Raw global angle vs the
-  //    vertical would flag every correctly-bent-over golfer — the V1 bug.)
-  const deltaAtImpact = user.spineDeltaDeg[p.impact] as number;
-  if (deltaAtImpact > 8) {
-    faults.push({
-      code: "spine_retention",
-      name: "Spine-Angle Retention",
-      severity: "minor",
-      phase: "downswing",
-      measured: Math.round(deltaAtImpact * 10) / 10,
-      target: 8,
-      unit: "deg",
-      summary: `Your spine angle changed ${deltaAtImpact.toFixed(1)}° between address and impact (tolerance ≤ 8°). Losing posture mid-swing moves the low point.`,
-    });
-  }
-
-  // 5) Kinematic sequence — evaluated ONLY inside the downswing window.
-  const seq = kinematicSequenceReport(user, p.top_of_backswing, p.impact);
-  if (!seq.sequenceCorrect) {
-    const orderStr = Object.entries(seq.peakFrames)
-      .sort((a, b) => a[1] - b[1])
-      .map(([k]) => k)
-      .join(" → ");
-    faults.push({
-      code: "kinematic_sequence",
-      name: "Kinematic Sequence Out of Order",
-      severity: "major",
-      phase: "downswing",
-      measured: 0,
-      target: 0,
-      unit: "order",
-      summary: `Your peak-speed order was ${orderStr}; the efficient chain is hips → torso → arms → hands. Energy is leaking up the chain early.`,
-    });
-  }
-
-  const sevOrder: Record<string, number> = { critical: 0, major: 1, minor: 2 };
-  faults.sort((a, b) => (sevOrder[a.severity] ?? 9) - (sevOrder[b.severity] ?? 9));
-  return faults;
-}
-
-/**
- * Verify hips → torso → arms → hands peak-velocity ordering, evaluated ONLY
- * inside the downswing window [top, impact + margin]. Peak time = centroid
- * of the top-30% velocity mass (a raw argmax on a plateau peak jumps frames
- * under sensor noise; the centroid is stable). Peaks within the tie tolerance
- * (~2 frames at 30 fps) never flag a fault.
- */
 export function kinematicSequenceReport(
   m: SwingMetrics,
   downswingStart: number,
@@ -607,44 +492,33 @@ export function kinematicSequenceReport(
 }
 
 // ---------------------------------------------------------------------------
-// Drill library
+// Drill recommendation mapping (V4) — structured drill objects from
+// src/engine/drills.ts, with the markdown card built from the same data.
 // ---------------------------------------------------------------------------
-const DRILL_BODIES: Record<string, { name: string; body: string }> = {
-  early_extension: {
-    name: "Chair Drill (Butt-Back Wall Drill)",
-    body: "**Setup**\n\n1. Address a ball with a chair back (or wall) lightly touching your glutes.\n2. Make slow-motion swings keeping **both glutes in contact** until lead-arm-parallel in the downswing.\n3. At impact, your **trail glute** should still brush the chair.\n\n**Reps:** 3 sets × 10 slow swings, then 5 at 75% speed.\n\n**Checkpoint:** hip thrust toward the ball under **2.0 in** on your next upload.",
-  },
-  chicken_wing: {
-    name: "Glove Under Armpit Drill",
-    body: "**Setup**\n\n1. Tuck a glove (or headcover) under your **lead armpit**.\n2. Hit half-shots keeping the glove pinned from setup through waist-high finish.\n3. The glove may only drop **after** both arms extend past impact.\n\n**Reps:** 20 balls at 50% speed, 10 at 75%.\n\n**Checkpoint:** lead-elbow angle ≥ **165°** through the impact window.",
-  },
-  sway: {
-    name: "Crossed-Arms Stance Pivot Drill",
-    body: "**Setup**\n\n1. Cross your arms over your chest, club across your shoulders.\n2. Rotate to a full backswing turn while keeping your **trail hip inside your trail ankle**.\n3. Feel pressure screw **into** the trail heel, not slide over it.\n\n**Reps:** 3 sets × 12 pivots; add an alignment stick outside the trail hip.\n\n**Checkpoint:** lateral hip sway under **2.5 in** at the top.",
-  },
-  spine_retention: {
-    name: "Head-on-Wall Posture Drill",
-    body: "**Setup**\n\n1. Set up with your forehead lightly touching a wall-mounted pad (or door frame).\n2. Rehearse backswing and downswing keeping constant light head pressure.\n3. Losing contact = losing spine angle.\n\n**Reps:** 3 sets × 8 rehearsals, eyes on a fixed ball position.\n\n**Checkpoint:** spine-angle deviation within **± 8°** of the model swing.",
-  },
-  kinematic_sequence: {
-    name: "Step-Change-of-Direction Drill",
-    body: "**Setup**\n\n1. Start with feet together; swing to the top.\n2. **Step** the lead foot toward the target to start the downswing — the step forces the lower body to fire first.\n3. Let the torso, arms, and club lag behind the step in order.\n\n**Reps:** 15 swings with a mid-iron at 60–70% speed.\n\n**Checkpoint:** peak-speed order hips → torso → arms → hands.",
-  },
-};
-
 export function recommendDrills(faults: readonly Fault[]): DrillCard[] {
-  return faults
-    .filter((f) => f.code in DRILL_BODIES)
-    .map((f) => {
-      const d = DRILL_BODIES[f.code] as { name: string; body: string };
-      const header =
-        `### ${d.name}\n\n` +
-        `**Fault:** ${f.name} · **Severity:** ${f.severity[0]?.toUpperCase()}${f.severity.slice(1)} · ` +
-        `**Phase:** ${f.phase.replace(/_/g, " ")}\n\n` +
-        `> **Target:** ${f.target} ${f.unit} · **Yours:** ${f.measured} ${f.unit}\n\n` +
-        `${f.summary}\n\n`;
-      return { faultCode: f.code, drillName: d.name, markdown: header + d.body };
-    });
+  return faults.map((f) => {
+    const spec = DRILL_LIBRARY[f.code] ?? GENERIC_DRILL;
+    const steps = spec.description.map((s, i) => `${i + 1}. ${s}`).join("\n");
+    const header =
+      `### ${spec.title}\n\n` +
+      `**Fault:** ${f.name} · **Severity:** ${f.severity[0]?.toUpperCase()}${f.severity.slice(1)} · ` +
+      `**Phase:** ${f.phase.replace(/_/g, " ")}\n\n` +
+      `> **Target:** ${f.target} ${f.unit} · **Yours:** ${f.measured} ${f.unit}\n\n` +
+      `${f.summary}\n\n`;
+    const body =
+      `${steps}\n\n` +
+      `**Focus:** ${spec.focusKey}\n\n` +
+      `**Reps:** ${spec.recommendedReps}`;
+    return {
+      faultCode: f.code,
+      drillName: spec.title,
+      markdown: header + body,
+      title: spec.title,
+      description: spec.description.join(" "),
+      focusKey: spec.focusKey,
+      recommendedReps: spec.recommendedReps,
+    };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -674,7 +548,7 @@ export function analyzeLocally(
   const userNorm = normalizeSwing(user);
   const userMetrics = computeMetrics(userNorm, user.leadSide);
   const userPhases = segmentPhases(userNorm, user.leadSide);
-  const faults = detectFaults(userMetrics, userPhases);
+  const faults = detectFaults18(userNorm.frames, userMetrics, userPhases, user.leadSide);
   const drills = recommendDrills(faults);
   const kin = kinematicSequenceReport(
     userMetrics,

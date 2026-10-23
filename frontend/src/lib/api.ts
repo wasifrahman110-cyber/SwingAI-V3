@@ -66,7 +66,15 @@ interface BackendResponse {
     unit: string;
     summary: string;
   }[];
-  drills: { fault_code: string; drill_name: string; markdown: string }[];
+  drills: {
+    fault_code: string;
+    drill_name: string;
+    markdown: string;
+    title?: string;
+    description?: string;
+    focus_key?: string;
+    recommended_reps?: string;
+  }[];
   swing_index: number;
 }
 
@@ -103,6 +111,10 @@ function fromWire(r: BackendResponse): AnalysisResult {
     faultCode: d.fault_code,
     drillName: d.drill_name,
     markdown: d.markdown,
+    ...(d.title !== undefined && { title: d.title }),
+    ...(d.description !== undefined && { description: d.description }),
+    ...(d.focus_key !== undefined && { focusKey: d.focus_key }),
+    ...(d.recommended_reps !== undefined && { recommendedReps: d.recommended_reps }),
   }));
   return {
     mode: r.mode,

@@ -19,6 +19,14 @@ export function DrillSheet({ fault, analysis, onClose }: DrillSheetProps) {
       <div className="sheet-backdrop" onClick={onClose} />
       <div className="drill-sheet" role="dialog" aria-label={`drill for ${fault.name}`}>
         <div className="grabber" />
+        {drill?.focusKey && (
+          <div className="drill-meta">
+            <span className="drill-meta-chip focus">◎ {drill.focusKey}</span>
+            {drill.recommendedReps && (
+              <span className="drill-meta-chip reps">↻ {drill.recommendedReps}</span>
+            )}
+          </div>
+        )}
         {drill ? (
           renderMarkdown(drill.markdown)
         ) : (

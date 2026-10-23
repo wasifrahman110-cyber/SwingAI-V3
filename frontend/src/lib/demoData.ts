@@ -71,7 +71,9 @@ export function synthSwing(opts: SynthOptions = {}): SwingSequence {
       if (p) { p.x = x; p.y = y; p.z = z; }
     };
 
-    const hipCx = 0.5 - sway * Math.max(0, b) * 0.5;
+    // Weight shifts mildly toward the target (+x) through the downswing —
+    // keeps the "hanging back" detector quiet on the clean model swing.
+    const hipCx = 0.5 - sway * Math.max(0, b) * 0.5 + 0.02 * down;
     const hipCy = 0.62;
     const hipCz = earlyExtension * down; // toward ball/camera in downswing
     const hipHalf = 0.055;
@@ -82,8 +84,11 @@ export function synthSwing(opts: SynthOptions = {}): SwingSequence {
     const shoCy = hipCy - 0.19;
     const shoHalf = 0.075;
     const srot = b * 0.7;
-    set(LM.LEFT_SHOULDER, hipCx + shoHalf, shoCy, hipCz + srot * shoHalf);
-    set(LM.RIGHT_SHOULDER, hipCx - shoHalf, shoCy, hipCz - srot * shoHalf);
+    // Real golfers tilt the shoulder plane in the backswing (lead shoulder
+    // works DOWN, ~30-40° plane) — raw +y is down in screen space.
+    const tilt = 0.065 * b;
+    set(LM.LEFT_SHOULDER, hipCx + shoHalf, shoCy + tilt, hipCz + srot * shoHalf);
+    set(LM.RIGHT_SHOULDER, hipCx - shoHalf, shoCy - tilt, hipCz - srot * shoHalf);
 
     set(LM.NOSE, hipCx, shoCy - 0.085, hipCz);
     set(LM.LEFT_EYE, hipCx + 0.012, shoCy - 0.09, hipCz);
@@ -102,21 +107,44 @@ export function synthSwing(opts: SynthOptions = {}): SwingSequence {
     const theta = 0.35 + b * 1.9;
     const wing = chickenWing * Math.max(0, (si - 0.75) / 0.25);
     const sx = hipCx + shoHalf;
-    const sy = shoCy;
-    const ex = sx + armLen * Math.sin(theta) * 0.9;
+    const sy = shoCy + tilt;
+    const armZ = hipCz + srot * shoHalf; // whole arm rides the torso's z-plane
+    const trailZ = hipCz - srot * shoHalf;
+    const ex = sx + armLen * Math.sin(theta);
     const ey = sy + armLen * Math.cos(theta);
-    set(LM.LEFT_ELBOW, ex, ey, hipCz);
+    set(LM.LEFT_ELBOW, ex, ey, armZ);
     const wx = ex + armLen * Math.sin(theta - wing * 1.2);
     const wy = ey + armLen * Math.cos(theta - wing * 1.2) - wing * 0.05;
-    set(LM.LEFT_WRIST, wx, wy, hipCz);
-    set(LM.RIGHT_ELBOW, 2 * hipCx - ex, ey, hipCz);
-    set(LM.RIGHT_WRIST, 2 * hipCx - wx, wy, hipCz);
-    for (const [hand, wrist] of [
-      [LM.LEFT_PINKY, LM.LEFT_WRIST], [LM.LEFT_INDEX, LM.LEFT_WRIST], [LM.LEFT_THUMB, LM.LEFT_WRIST],
-      [LM.RIGHT_PINKY, LM.RIGHT_WRIST], [LM.RIGHT_INDEX, LM.RIGHT_WRIST], [LM.RIGHT_THUMB, LM.RIGHT_WRIST],
+    set(LM.LEFT_WRIST, wx, wy, armZ);
+    set(LM.RIGHT_ELBOW, 2 * hipCx - ex, ey, trailZ);
+    set(LM.RIGHT_WRIST, 2 * hipCx - wx, wy, trailZ);
+
+    // Wrist cock: the hand/club assembly hinges ~52° going back, HOLDS that
+    // lag through the first 60% of the downswing, then releases into impact.
+    // (Casting = releasing this angle early; the clean model must not.)
+    const cockOf = (s: number): number => {
+      if (s < 0.55) return 0.9 * Math.sin((s / 0.55) * (Math.PI / 2)); // build
+      if (s < 0.7) return 0.9; // hold lag
+      if (s < 0.82) return 0.9 * (1 - (s - 0.7) / 0.12); // release
+      return 0;
+    };
+    const cock = cockOf(si);
+    const handLen = 0.035;
+    // forearm direction at the wrist, rotated by the cock angle = club/hand dir
+    const fx = wx - ex;
+    const fy = wy - ey;
+    const fn = Math.hypot(fx, fy) || 1e-6;
+    const hdx = (fx / fn) * Math.cos(cock) - (fy / fn) * Math.sin(cock);
+    const hdy = (fx / fn) * Math.sin(cock) + (fy / fn) * Math.cos(cock);
+    for (const [hand, off] of [
+      [LM.LEFT_PINKY, 1.0], [LM.LEFT_INDEX, 1.15], [LM.LEFT_THUMB, 0.85],
     ] as const) {
-      const w = pts[wrist];
-      if (w) set(hand, w.x + 0.01, w.y + 0.01, w.z);
+      set(hand, wx + hdx * handLen * off, wy + hdy * handLen * off, armZ);
+    }
+    for (const [hand, off] of [
+      [LM.RIGHT_PINKY, 1.0], [LM.RIGHT_INDEX, 1.15], [LM.RIGHT_THUMB, 0.85],
+    ] as const) {
+      set(hand, 2 * hipCx - (wx + hdx * handLen * off), wy + hdy * handLen * off, trailZ);
     }
 
     for (const [hip, knee, ankle, heel, toe, sign] of [
@@ -127,8 +155,10 @@ export function synthSwing(opts: SynthOptions = {}): SwingSequence {
       if (!h) continue;
       set(knee, h.x, h.y + 0.13, hipCz * 0.5);
       const baseX = 0.5 + sign * hipHalf;
-      set(ankle, baseX, h.y + 0.26, 0);
-      set(heel, baseX - 0.01, h.y + 0.27, 0);
+      // trail heel (sign < 0) releases off the turf only AFTER impact
+      const heelRise = sign < 0 ? Math.max(0, si - 0.82) * 0.18 : 0;
+      set(ankle, baseX, h.y + 0.26 - heelRise * 0.5, 0);
+      set(heel, baseX - 0.01, h.y + 0.27 - heelRise, 0);
       set(toe, baseX + 0.02, h.y + 0.27, 0.02);
     }
 

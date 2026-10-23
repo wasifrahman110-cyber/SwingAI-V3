@@ -20,8 +20,9 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
 
+from analytics.biomechanics import detect_faults
 from analytics.dtw_aligner import align_swings, phase_aligned_checkpoints, segment_phases
-from analytics.drills import detect_faults, recommend_drills
+from analytics.drills import recommend_drills
 from analytics.metrics import (
     PoseNormalizer,
     compute_metrics,
@@ -97,7 +98,7 @@ def analyze(req: AnalyzeRequest) -> dict:
 
         # Faults are fully self-referential (posture deltas from the golfer's
         # own address) — identical results with or without a reference swing.
-        faults = detect_faults(user_metrics, user_phases)
+        faults = detect_faults(user_norm.frames, user_metrics, user_phases, lead_side=lead)
         drills = recommend_drills(faults)
         kin = kinematic_sequence_report(
             user_metrics, user_phases.top_of_backswing, user_phases.impact
@@ -113,7 +114,15 @@ def analyze(req: AnalyzeRequest) -> dict:
             "spine_delta_deg": user_metrics.spine_delta_deg.tolist(),
             "faults": [asdict(f) for f in faults],
             "drills": [
-                {"fault_code": d.fault.code, "drill_name": d.drill_name, "markdown": d.markdown}
+                {
+                    "fault_code": d.fault.code,
+                    "drill_name": d.drill_name,
+                    "markdown": d.markdown,
+                    "title": d.title,
+                    "description": d.description,
+                    "focus_key": d.focus_key,
+                    "recommended_reps": d.recommended_reps,
+                }
                 for d in drills
             ],
         }

@@ -1,7 +1,8 @@
 /**
- * SwingAI app shell (V2) — phone frame, 5-view navigation (Home, Journal,
- * upload, Drill Studio, Progress + the player), MediaPipe upload flows for
- * both the analyzed swing and the reference swing, session persistence.
+ * SwingAI app shell (V4 = V2 baseline + expanded diagnostics) — phone frame,
+ * 5-view navigation (Home, Journal, upload, Drill Studio, Progress + the
+ * player), MediaPipe upload flows for both the analyzed swing and the
+ * reference swing, localStorage session persistence.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -34,13 +35,42 @@ export default function App() {
   const [sessions, setSessions] = useState<SessionRecord[]>(() => loadSessions());
   const [journal, setJournal] = useState<JournalEntry[]>(() => loadJournal());
 
+  // Track every object URL we mint so they are revoked on unmount.
+  const objectUrlsRef = useRef<string[]>([]);
+  const mintUrl = useCallback((blob: Blob): string => {
+    const url = URL.createObjectURL(blob);
+    objectUrlsRef.current.push(url);
+    return url;
+  }, []);
+  useEffect(
+    () => () => {
+      for (const url of objectUrlsRef.current) URL.revokeObjectURL(url);
+      objectUrlsRef.current = [];
+    },
+    [],
+  );
+
   // auto-save each newly analyzed swing (once per swing) into the library
   const lastSavedRef = useRef<SwingSequence | null>(null);
+  const sessionsRef = useRef<SessionRecord[]>([]);
+  sessionsRef.current = sessions;
   useEffect(() => {
     if (!swing.analysis || swing.analyzing) return;
     if (lastSavedRef.current === swing.user) return;
     lastSavedRef.current = swing.user;
     const label = swing.isDemo ? "Demo Swing" : "My Swing";
+    // don't re-save an identical demo swing on every app open
+    if (
+      swing.isDemo &&
+      sessionsRef.current.some(
+        (s) =>
+          s.label === "Demo Swing" &&
+          s.swingIndex === swing.analysis?.swingIndex &&
+          s.swing.frames.length === swing.user.frames.length,
+      )
+    ) {
+      return;
+    }
     const rec = saveSession(label, swing.user, swing.analysis);
     if (rec) setSessions((prev) => [rec, ...prev].slice(0, 12));
   }, [swing.analysis, swing.analyzing, swing.user, swing.isDemo]);
@@ -50,27 +80,31 @@ export default function App() {
     setScreen("detail");
   }, []);
 
+  const makeVideo = useCallback(
+    (blob: Blob): HTMLVideoElement => {
+      const v = document.createElement("video");
+      v.src = mintUrl(blob);
+      v.muted = true;
+      v.playsInline = true;
+      v.preload = "auto";
+      return v;
+    },
+    [mintUrl],
+  );
+
   const onPickFile = useCallback(
     async (file: File) => {
       const target = uploadTargetRef.current;
       const seq = await mediapipe.extract(file, "left");
       if (!seq) return;
-      const makeVideo = (): HTMLVideoElement => {
-        const v = document.createElement("video");
-        v.src = URL.createObjectURL(file);
-        v.muted = true;
-        v.playsInline = true;
-        v.preload = "auto";
-        return v;
-      };
       if (target === "reference") {
-        swing.setReference(seq, file.name.replace(/\.[^.]+$/, ""), makeVideo());
+        swing.setReference(seq, file.name.replace(/\.[^.]+$/, ""), makeVideo(file));
       } else {
-        swing.replaceUserSwing(seq, makeVideo());
+        swing.replaceUserSwing(seq, makeVideo(file));
       }
       setScreen("detail");
     },
-    [mediapipe, swing],
+    [mediapipe, swing, makeVideo],
   );
 
   const startUpload = useCallback((target: "user" | "reference") => {
@@ -94,6 +128,7 @@ export default function App() {
   const openSession = useCallback(
     (s: SessionRecord) => {
       if (s.swing.frames.length === 0) return;
+      lastSavedRef.current = s.swing; // don't re-save what we just loaded
       swing.replaceUserSwing(s.swing, null, s.label === "Demo Swing" ? "demo" : undefined);
       setScreen("detail");
     },
@@ -170,8 +205,8 @@ export default function App() {
             left: "50%",
             transform: "translateX(-50%)",
             zIndex: 40,
-            background: "rgba(255,59,48,0.14)",
-            color: "#FF3B30",
+            background: "rgba(224,86,75,0.15)",
+            color: "var(--anomaly-red)",
             maxWidth: "86%",
             whiteSpace: "nowrap",
             overflow: "hidden",
@@ -239,12 +274,7 @@ export default function App() {
         }}
       />
 
-      <TabBar
-        screen={screen}
-        busy={busy}
-        onGo={setScreen}
-        onUpload={() => setUploadMenu(true)}
-      />
+      <TabBar screen={screen} busy={busy} onGo={setScreen} onUpload={() => setUploadMenu(true)} />
     </div>
   );
 }

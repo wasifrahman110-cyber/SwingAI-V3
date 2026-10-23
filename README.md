@@ -1,4 +1,4 @@
-# SwingAI V2 — Pro-Grade Golf Telemetry & Visual Analysis
+# SwingAI V4 — V2 Baseline + Research-Grounded Diagnostics & Drill Engine
 
 Computer-vision golf swing analysis: in-browser MediaPipe pose extraction, single-swing or dual-comparison analysis with DTW synchronization, a telestrator annotation layer, kinematic-sequence telemetry, and a drill recommendation engine — in a mobile-style dark UI (deep slate `#0D0D0E`, surfaces `#18181B`, glass-blur floating layers).
 
@@ -34,6 +34,18 @@ python -m tests.test_engine
 **Kinematic sequence** applies Savitzky-Golay smoothing (w=5 on coordinates, w=7 on the velocity series) before temporal derivatives, measures pelvis/thorax rotation in the horizontal plane but the arm/hand assembly in the swing plane, takes each segment's peak as the centroid of its top-30% velocity mass (stable where a raw argmax jitters), evaluates ordering ONLY inside the downswing window (top → impact), and treats peaks within ~2 frames as ties. Result: clean swings analyzed under 3× sensor noise keep a stable verdict — verified in the test suite.
 
 Fault detection is now fully self-contained (no reference swing needed), so SINGLE SWING mode produces the identical fault set, and the solo Swing Index starts at 10 minus severity-weighted penalties. Dual mode keeps the DTW-similarity-based index.
+
+
+
+## V4 (built on the V2 baseline)
+
+V4 deliberately drops the V3 launch-monitor/telemetry-sidebar/video-exporter/IndexedDB layer and returns to the V2 baseline (all V2 features intact: telestrator, dual comparison, kinematics chart, journal, studio, progress with localStorage), then extends it with:
+
+**20-rule diagnostic engine** (`src/engine/diagnostics.ts` + `backend/analytics/biomechanics.py`): head sway / early head lift / head dipping, loss of spine angle, reverse spine angle, flat shoulder turn, overswing, lead-shoulder snatch, casting / early release, chicken wing, lead-arm breakdown, flip/scoop at impact (wrist-compression loss), hip slide, early extension, hip stall, premature trail-heel lift, lead-knee collapse, hanging back — plus backswing sway and the kinematic sequence. Every rule is SavGol-filtered, self-referential, and regression-tested to fire zero false positives on clean model swings.
+
+**Structured drill mapping** (`src/engine/drills.ts` + `backend/analytics/drills.py`): every fault maps to a drill object with `title`, step-by-step `description`, `focusKey`, and `recommendedReps` — Head Against Wall, Chair Behind Glutes, Pump Drill, Head Cover Under Armpit, Step-Through Finish, and 15 more. The coaching copy is grounded in published research: force-plate studies showing tour players carry **75–90% of pressure on the lead foot at impact** (98–100% into the finish) while amateurs hang back, and wrist-sensor data showing pros **reduce lead-wrist extension 20–25° from the top to impact** — the flat-to-flexed lead wrist that compresses the ball, versus the cupped-wrist flip.
+
+**UI integration (additive only):** each detected fault carries a body-group tag (Head & Spine / Shoulders & Torso / Arms & Wrists / Hips & Pelvis / Legs & Weight / Sequencing) in the collapsible fix panels, and the drill sheet leads with Focus and Reps chips. The Drill Studio lists the full 20-drill library. Nothing in the V2 player, telestrator, or telemetry formats was altered.
 
 ## The player
 
