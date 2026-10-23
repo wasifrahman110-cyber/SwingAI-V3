@@ -1,10 +1,100 @@
-# SwingAI V5 — Diagnostics, Drills, Multi-Angle, CoP & Voice Coaching
+# SwingAI
 
-Computer-vision golf swing analysis: in-browser MediaPipe pose extraction, single-swing or dual-comparison analysis with DTW synchronization, a telestrator annotation layer, kinematic-sequence telemetry, and a drill recommendation engine — in a mobile-style dark UI (deep slate `#0D0D0E`, surfaces `#18181B`, glass-blur floating layers).
+A computer-vision golf swing analyzer that turns a single phone-camera video into a full biomechanical breakdown: 17 rule-based fault checks, drill recommendations grounded in published swing research, a synchronized dual-swing comparison player, and a freehand telestrator — all running client-side in the browser, with an optional FastAPI service that mirrors the exact same analysis pipeline in NumPy/SciPy.
 
-## Quick start
+No footage ever has to leave the device: pose extraction, smoothing, kinematics, and fault detection all run in-browser by default, and the app keeps working with zero network access after the pose model is cached.
 
-Frontend (fully standalone — a bundled synthetic demo swing drives the whole UI with no backend and no uploads):
+ System architecture
+
+```
+Video upload
+     │
+     ▼
+MediaPipe Pose Landmarker (BlazePose-lite, WASM)   — hooks/useMediaPipe.ts
+  33 landmarks/frame · GPU delegate w/ automatic CPU fallback
+     │
+     ▼
+Height-normalization                                — lib/engine.ts / analytics/metrics.py
+  scale by median torso+limb length, re-center on the setup-frame pelvis,
+  flip Y so +y = up
+     │
+     ▼
+Savitzky-Golay smoothing (window 5 / 7)             — lib/vectorMath.ts / analytics/metrics.py
+  suppresses frame-to-frame landmark jitter without flattening real
+  velocity peaks the way a moving average does
+     │
+     ▼
+Kinematic vector geometry                           — lib/engine.ts / analytics/metrics.py
+  joint angles via θ = arccos(u·v / |u||v|), signed wrist-cock angle,
+  per-segment angular velocity (hips → torso → arms → hands)
+     │
+     ├──► 17-rule fault detector (self-referential)  — engine/diagnostics.ts / analytics/biomechanics.py
+     │      each rule compares the golfer against their OWN address posture,
+     │      never a reference swing — works identically in solo mode
+     │
+     ├──► Dynamic Time Warping (dual mode only)      — lib/engine.ts / analytics/dtw_aligner.py
+     │      O(N·M) DP with a Sakoe-Chiba band, aligns two swings recorded
+     │      at different tempos frame-for-frame
+     │
+     └──► Canvas-based swing player + telestrator    — components/SwingCanvas.tsx,
+            rAF-driven skeleton overlay, freehand/line/circle annotations   TelestratorCanvas.tsx
+```
+
+The frontend (`lib/engine.ts`) and backend (`backend/analytics/`) are independent, line-for-line ports of the same math — the app calls the FastAPI service when it's reachable and transparently falls back to the in-browser engine otherwise (`lib/api.ts`), so the UI behaves identically either way.
+
+## Key technical features
+
+**Biomechanical fault diagnostics (17 rules, 5 body groups).** Head & spine (sway, early lift, dip, spine-angle retention), shoulders & torso (reverse spine angle, overswing, lead-shoulder snatch), arms & wrists (casting/early release, chicken wing, flip/scoop), hips & pelvis (hip slide, early extension, hip stall), and legs & weight (trail-heel lift, lead-knee collapse) — plus backswing sway and kinematic-sequence ordering. Every rule runs on SavGol-smoothed series and is regression-tested to stay silent on a clean model swing; casting and flip/scoop are additionally gated on resolved hand landmarks so noisy tracking can never fire a false positive.
+
+**Dynamic Time Warping for dual comparison.** A from-scratch NumPy DTW implementation (no external DTW dependency) non-linearly warps the user's swing timeline onto a reference swing so "top of backswing" lines up with "top of backswing" regardless of tempo, then reports a per-frame deviation matrix (spine angle, lead-arm extension, hip sway/thrust/rotation) with the joints to highlight.
+
+**Camera-derived impact metrics.** Forward shaft lean, a center-of-pressure estimate (proxy from pelvis position relative to the ankles, not force plates), and a smash-factor heuristic derived from the detected faults — clearly labeled as estimates in the UI, since there's no ball tracking.
+
+**Local-first persistence.** Every analyzed swing and journal entry is saved to `localStorage` and reloads straight into the player — no account, no server database.
+
+**Dual-video synchronization.** Upload a second, down-the-line clip of the same swing and the player renders face-on + DTL side by side on one synchronized timeline, with an auto-derived or manually offset impact alignment.
+
+**Freehand telestrator.** Pen (Catmull-Rom spline through sampled points), line, and circle annotation tools with draggable handles; drawings persist across scrubbing and playback and can lock to a single frame or stay global.
+
+## Engineering focus
+
+- **Client-side inference, zero mandatory backend.** The FastAPI service exists to run the identical analysis pipeline server-side (useful for batch processing or a future mobile client), but the product works fully offline in the browser after the first model download.
+- **One math pipeline, two runtimes.** Normalization, Savitzky-Golay smoothing, joint-angle geometry, DTW, and all 17 fault rules are implemented twice — once in TypeScript, once in NumPy — deliberately kept in lockstep so a fix in one is a fix in both.
+- **Self-referential fault detection.** Faults are computed entirely from a golfer's own address posture and published biomechanical tolerances. This means single-swing mode produces the exact same diagnostics as dual mode; no reference swing is required to get a real analysis.
+- **Regression-tested against false positives.** The backend test suite (`backend/tests/test_engine.py`) asserts that a clean tour-benchmark swing trips zero of the 17 rules, and specifically regression-tests edge cases like unresolved hand landmarks and 3× injected sensor noise, since a diagnostic tool that cries wolf is worse than no tool at all.
+
+## Project layout
+
+```
+frontend/src/
+  components/SwingCanvas.tsx        rAF-driven dual-stream player
+  components/TelestratorCanvas.tsx  annotation overlay (pen / line / circle)
+  components/TelestratorToolbar.tsx tool rail: swatches, undo/redo, lock toggle
+  components/KinematicsChart.tsx    angular-velocity chart (hips/torso/arms/hands)
+  components/Scrubber.tsx           timeline with phase keyframes
+  components/SwingDetailScreen.tsx  player screen (mode selector, controls)
+  components/HomeScreen.tsx / SwingJournal.tsx / DrillStudio.tsx / ProgressScreen.tsx
+  engine/diagnostics.ts             17-rule fault detector
+  engine/drills.ts                  drill + pro-model-reference library
+  engine/scoring.ts                 Swing Index + impact-metric estimates
+  hooks/useMediaPipe.ts             pose extraction (monotonic timestamps, GPU→CPU fallback)
+  hooks/useSwingAnalysis.ts         solo/dual analysis lifecycle
+  lib/engine.ts                     normalization, kinematics, DTW, phase segmentation
+  lib/vectorMath.ts                 3-D vector math + Savitzky-Golay primitives
+  lib/sessionStore.ts               localStorage sessions + journal
+  lib/api.ts                        backend client with local-engine fallback
+backend/
+  main.py                           FastAPI /api/analyze (solo + dual)
+  analytics/metrics.py              normalization, SavGol, kinematics (NumPy mirror)
+  analytics/dtw_aligner.py          DTW + phase segmentation
+  analytics/biomechanics.py         the 17 fault rules
+  analytics/drills.py               drill card generation
+  tests/test_engine.py              regression suite for the analytics pipeline
+```
+
+## Setup
+
+**Frontend** (fully standalone — a bundled synthetic demo swing drives the whole UI with no backend and no uploads):
 
 ```bash
 cd frontend
@@ -12,7 +102,7 @@ npm install
 npm run dev          # http://localhost:5173
 ```
 
-Backend (optional — the identical pipeline in NumPy/SciPy; auto-detected via the /api proxy, in-browser engine used as fallback):
+**Backend** (optional — the identical pipeline in NumPy/SciPy; the frontend auto-detects it via the `/api` proxy and falls back to the in-browser engine if it's unreachable):
 
 ```bash
 cd backend
@@ -20,87 +110,22 @@ pip install -r requirements.txt
 uvicorn main:app --reload --port 8000
 ```
 
-Engine test suite (24 checks, including the V2 false-positive regressions):
+**Analytics test suite:**
 
 ```bash
 cd backend
 python -m tests.test_engine
 ```
 
-## V2 math fixes (false-positive elimination)
+**Type-check the frontend:**
 
-**Spine-angle retention** now tracks the posture DELTA from the golfer's own address: θ₀ is measured at setup, the series is Δθₜ = |θₜ − θ₀|, and the fault fires only when Δθ at impact exceeds 8°. A tour pro bent 30° over the ball scores ~0 all swing long — the V1 bug scored the raw global angle against vertical and flagged everyone.
-
-**Kinematic sequence** applies Savitzky-Golay smoothing (w=5 on coordinates, w=7 on the velocity series) before temporal derivatives, measures pelvis/thorax rotation in the horizontal plane but the arm/hand assembly in the swing plane, takes each segment's peak as the centroid of its top-30% velocity mass (stable where a raw argmax jitters), evaluates ordering ONLY inside the downswing window (top → impact), and treats peaks within ~2 frames as ties. Result: clean swings analyzed under 3× sensor noise keep a stable verdict — verified in the test suite.
-
-Fault detection is now fully self-contained (no reference swing needed), so SINGLE SWING mode produces the identical fault set, and the solo Swing Index starts at 10 minus severity-weighted penalties. Dual mode keeps the DTW-similarity-based index.
-
-
-
-## V4 (built on the V2 baseline)
-
-V4 deliberately drops the V3 launch-monitor/telemetry-sidebar/video-exporter/IndexedDB layer and returns to the V2 baseline (all V2 features intact: telestrator, dual comparison, kinematics chart, journal, studio, progress with localStorage), then extends it with:
-
-**17-rule diagnostic engine (V4.1)** (`src/engine/diagnostics.ts` + `backend/analytics/biomechanics.py`): head sway (≤ 4.5 in, sustained), early head lift, head dipping, loss of spine angle, reverse spine angle, overswing (≤ 125°), lead-shoulder snatch, casting / early release, chicken wing, flip/scoop at impact, hip slide, early extension, hip stall, premature trail-heel lift (≤ 2.5 in), lead-knee collapse — plus backswing sway and the kinematic sequence. Flat Shoulder Turn, Lead Arm Breakdown, and Hanging Back were permanently removed in V4.1 (false-positive-prone on tour benchmarks). Casting/flip are double-gated: they evaluate only between the top and mid-downswing (P5), require ≥ 30° of measurable wrist cock at the top, and require resolved hand landmarks (≥ 1.2 in hand-wrist separation) — unresolved tracking can never fire them (threshold 165°, 15° grace). Every rule is SavGol-filtered, self-referential, and regression-tested to fire zero false positives on clean model swings.
-
-**Structured drill mapping** (`src/engine/drills.ts` + `backend/analytics/drills.py`): every fault maps to a drill object with `title`, step-by-step `description`, `focusKey`, and `recommendedReps` — Head Against Wall, Chair Behind Glutes, Pump Drill, Head Cover Under Armpit, Step-Through Finish, and 15 more. The coaching copy is grounded in published research: force-plate studies showing tour players carry **75–90% of pressure on the lead foot at impact** (98–100% into the finish) while amateurs hang back, and wrist-sensor data showing pros **reduce lead-wrist extension 20–25° from the top to impact** — the flat-to-flexed lead wrist that compresses the ball, versus the cupped-wrist flip.
-
-**UI integration (additive only):** each detected fault carries a body-group tag (Head & Spine / Shoulders & Torso / Arms & Wrists / Hips & Pelvis / Legs & Weight / Sequencing) in the collapsible fix panels, and the drill sheet leads with Focus and Reps chips. The Drill Studio lists the full 17-drill library. Telestrator drawings now persist across playback by default (Global Overlay); frame-locking is an explicit F/G opt-in, and only the Clear button erases drawings. Nothing in the V2 player, telestrator, or telemetry formats was altered.
-
-
-## V5 additions
-
-**Optimistic scoring** (`src/engine/scoring.ts`): 100-point baseline with logarithmic soft-margin deductions — a fault barely over threshold costs half its severity weight, blowouts cost full weight, and a micro-deviation term (RMS spine wobble) replaces an implausible perfect 100. Tour-benchmark swings land in the elite 9.6–9.9 band (test-enforced). Chicken wing is now lenient: >52° lead-elbow flex sustained ≥3 consecutive frames post-impact.
-
-**Dual master scrubber**: a normalized t∈[0,1] slider (dual mode only) drives both streams simultaneously, with a SYNC IMPACT toggle that auto-derives the frame offset from the detected impact keyframes.
-
-**Multi-Angle mode**: SINGLE | DUAL | MULTI-ANGLE selector; upload a down-the-line clip and view Face-On + DTL side-by-side with proportional sync. The face-on impact suite reports forward shaft lean (target 5–12°, gated on resolved hand landmarks) and lateral hip lead.
-
-**CoP + Smash card** directly below the identified-errors list: a lead/trail load bar (video-proxy CoP vs the 75–90% tour band) and a color-coded smash-factor estimate (>1.45 green / 1.35–1.44 amber / <1.35 red, honestly labeled "est" — no ball tracking).
-
-**Voice feedback** (🔊 toggle): Web Speech API reads the top 2 highest-severity errors only, after each analysis.
-
-**Fault Improvement Trend dashboard** on Home: per-session fault counts, most-frequent faults, and percentage reductions across recent sessions. **Watch Pro Model Swing** sections in the drill sheet and studio embed tour-player reference clips (privacy-enhanced YouTube search embeds — never stale links).
-
-**🪄 Track Backswing Arc** in the telestrator toolbar: auto-traces the club path address→top as a Catmull-Rom spline plus the shaft-plane extension ray to the turf, stored in the persistent annotation state (survives scrubbing/playback, undo-able, null-guarded rendering).
-
-## The player
-
-The header toggles `[ SINGLE SWING ]` / `[ DUAL COMPARISON ]`. Dual mode prompts for a reference — pick from the built-in model-swing library (synthetic, parametric — no licensed footage) or upload any clip — then renders a synchronized split view driven by one rAF loop: your swing left, reference right, reference frame = DTW time-map + a ±30-frame manual offset slider with an **ALIGN IMPACT** button. GHOST overlays the reference skeleton on your pane at adjustable opacity. Playback runs at 0.1× / 0.25× / 0.5× / 1×, with ←/→ frame stepping, Space play/pause, and horizontal swipe scrubbing on the canvas.
-
-**Telestrator** (DRAW chip): freehand pen rendered as a Catmull-Rom spline, straight line with draggable endpoint handles, and a head circle with center/radius handles; five technical swatches (`#FFB800`, `#00E5FF`, `#30D158`, `#FF3B30`, `#FFFFFF`); undo / redo / clear; annotations lock to the frame they were drawn on or persist globally (F/G toggle).
-
-**Telemetry:** an angular-velocity chart under the scrubber shows hip / torso / arm / hand curves with the downswing window shaded, peak markers, sequence verdict, and a tap-to-seek playhead. The scrubber carries auto-extracted keyframe ticks for Address / Top / Downswing / Impact / Finish. The kebab button exports a 1080×1920 telemetry card PNG (Swing Index, max rotary velocity, spine retention, kinematic order, impact-frame skeleton).
-
-## Navigation
-
-Home (dashboard + framework hex map) · **Swing Journal** (feel notes with #tag chips, linked to analyzed sessions) · (+) upload · **Drill Studio** (drills matched to your detected faults, the full drill library, and the reference library with one-tap "Load into Dual Mode") · **Progress** (swing-index trend, fault-frequency bars, and the session library — every analyzed swing auto-saves locally and reloads into the player).
-
-## Layout
-
-```
-frontend/src/
-  components/SwingCanvas.tsx        unified rAF dual-stream player
-  components/TelestratorCanvas.tsx  annotation overlay (pen/line/circle)
-  components/TelestratorToolbar.tsx tool rail: swatches, undo/redo, F/G lock
-  components/KinematicsChart.tsx    4-series angular-velocity chart
-  components/Scrubber.tsx           timeline: heat-strip, phase keyframes
-  components/SwingDetailScreen.tsx  player screen (mode selector, controls)
-  components/HomeScreen.tsx / SwingJournal.tsx / DrillStudio.tsx / ProgressScreen.tsx
-  components/ReferenceModal.tsx / FixList.tsx / DrillSheet.tsx / TabBar.tsx
-  hooks/useMediaPipe.ts             pose extraction (monotonic timestamps, GPU→CPU fallback)
-  hooks/useSwingAnalysis.ts         solo/dual analysis lifecycle
-  lib/engine.ts                     TS mirror of the full analytics pipeline
-  lib/vectorMath.ts                 SavGol, Catmull-Rom-ready primitives, dot-product angles
-  lib/sessionStore.ts               localStorage sessions + journal
-  lib/telemetryCard.ts              1080×1920 social export renderer
-  lib/demoData.ts / api.ts / markdown.tsx
-backend/
-  main.py                           FastAPI /api/analyze (solo + dual)
-  analytics/metrics.py              normalization, SavGol, retention delta, kinematics
-  analytics/dtw_aligner.py          DTW + phase segmentation
-  analytics/drills.py               self-contained fault rules + drill cards
-  tests/test_engine.py              24-check suite incl. V2 regressions
+```bash
+cd frontend
+npm run typecheck    # or: npm run build (typecheck + vite build)
 ```
 
-Notes: the pose model + WASM load from Google's CDN on first upload (network needed for live extraction only); everything else runs offline. Dev server proxies `/api` to `localhost:8000`.
+## Notes
+
+- The MediaPipe pose model and WASM runtime load from a CDN on first video upload; every other feature (demo data, journal, drills, telestrator, previously analyzed sessions) runs fully offline.
+- The dev server proxies `/api` to `localhost:8000`, so both pieces can run side by side with no CORS configuration needed in development.
+- Reference/model swings used for comparison are synthetically generated (`lib/demoData.ts`) — no licensed footage is bundled with the app.

@@ -39,9 +39,7 @@ import {
 } from "./vectorMath.ts";
 
 
-// ---------------------------------------------------------------------------
 // Normalization
-// ---------------------------------------------------------------------------
 export interface NormalizedSwing {
   /** frames[t][i] = [x, y, z] with pelvis-anchored origin, +y UP, height units. */
   readonly frames: ReadonlyArray<ReadonlyArray<Vec3>>;
@@ -96,9 +94,7 @@ export function normalizeSwing(seq: SwingSequence, setupFrames = 5): NormalizedS
   return { frames, scale };
 }
 
-// ---------------------------------------------------------------------------
 // Metrics
-// ---------------------------------------------------------------------------
 export interface SwingMetrics {
   readonly spineAngleDeg: readonly number[];
   /** |theta_t − theta_setup|: posture CHANGE from address, in degrees. */
@@ -239,9 +235,7 @@ export function featureMatrix(m: SwingMetrics): number[][] {
   return Array.from({ length: T }, (_, t) => z.map((c) => c[t] as number));
 }
 
-// ---------------------------------------------------------------------------
-// DTW  —  D[i,j] = d(i,j) + min(D[i-1,j], D[i,j-1], D[i-1,j-1])
-// ---------------------------------------------------------------------------
+// DTW: D[i,j] = d(i,j) + min(D[i-1,j], D[i,j-1], D[i-1,j-1])
 export function dtwAlign(
   userFeat: readonly (readonly number[])[],
   proFeat: readonly (readonly number[])[],
@@ -325,9 +319,7 @@ export function dtwAlign(
   };
 }
 
-// ---------------------------------------------------------------------------
 // Phase segmentation (lead-wrist trajectory heuristics)
-// ---------------------------------------------------------------------------
 export function segmentPhases(
   norm: NormalizedSwing,
   leadSide: "left" | "right" = "left",
@@ -393,9 +385,7 @@ export function segmentPhases(
   };
 }
 
-// ---------------------------------------------------------------------------
 // Deviations + fault detection + drills
-// ---------------------------------------------------------------------------
 export const SPINE_ANGLE_THRESHOLD_DEG = 8;
 export const LEAD_ARM_THRESHOLD_DEG = 20;
 export const HIP_SWAY_THRESHOLD = 0.055;
@@ -492,10 +482,8 @@ export function kinematicSequenceReport(
   };
 }
 
-// ---------------------------------------------------------------------------
 // Drill recommendation mapping (V4) — structured drill objects from
 // src/engine/drills.ts, with the markdown card built from the same data.
-// ---------------------------------------------------------------------------
 export function recommendDrills(faults: readonly Fault[]): DrillCard[] {
   return faults.map((f) => {
     const spec = DRILL_LIBRARY[f.code] ?? GENERIC_DRILL;
@@ -522,9 +510,7 @@ export function recommendDrills(faults: readonly Fault[]): DrillCard[] {
   });
 }
 
-// ---------------------------------------------------------------------------
 // Full local pipeline (solo + dual)
-// ---------------------------------------------------------------------------
 /**
  * V5 optimistic recalibration: both solo and dual indices come from the
  * 100-point log-soft-margin scoring engine (src/engine/scoring.ts). The DTW

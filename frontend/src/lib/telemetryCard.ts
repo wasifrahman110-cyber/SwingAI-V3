@@ -24,7 +24,7 @@ export function renderTelemetryCard(
   const ctx = canvas.getContext("2d");
   if (!ctx) return canvas;
 
-  // ---- backdrop ---------------------------------------------------------
+  // backdrop
   const bg = ctx.createLinearGradient(0, 0, 0, H);
   bg.addColorStop(0, "#0d0d0e");
   bg.addColorStop(0.55, "#101210");
@@ -47,7 +47,7 @@ export function renderTelemetryCard(
     ctx.stroke();
   }
 
-  // ---- header -----------------------------------------------------------
+  // header
   ctx.fillStyle = "#a3c293";
   ctx.font = "800 54px Inter, sans-serif";
   ctx.fillText("SWINGAI", 72, 130);
@@ -59,7 +59,7 @@ export function renderTelemetryCard(
   ctx.fillText(playerName.toUpperCase(), W - 72, 182);
   ctx.textAlign = "left";
 
-  // ---- swing index hero -------------------------------------------------
+  // swing index hero
   ctx.fillStyle = "#f5f5f7";
   ctx.font = "800 300px 'JetBrains Mono', monospace";
   ctx.fillText(analysis.swingIndex.toFixed(1), 72, 520);
@@ -70,7 +70,7 @@ export function renderTelemetryCard(
   ctx.font = "700 30px 'JetBrains Mono', monospace";
   ctx.fillText(analysis.mode === "dual" ? "VS REFERENCE" : "SOLO ANALYSIS", 78, 640);
 
-  // ---- skeleton snapshot at impact -------------------------------------
+  // skeleton snapshot at impact
   const impact = analysis.phases.user.impact;
   const frame = user.frames[Math.min(impact, user.frames.length - 1)];
   if (frame) {
@@ -121,7 +121,7 @@ export function renderTelemetryCard(
     ctx.fillText("IMPACT FRAME", panel.x + 24, panel.y + panel.h - 24);
   }
 
-  // ---- stat rows --------------------------------------------------------
+  // stat rows
   const stats: Array<[string, string, string]> = [
     ["MAX ROTARY VELOCITY", `${maxRotaryVelocity(analysis, user.fps)}`, "deg/s pelvis"],
     [
@@ -163,7 +163,7 @@ export function renderTelemetryCard(
     y += 220;
   }
 
-  // ---- phase strip ------------------------------------------------------
+  // phase strip
   const stripY = y + 40;
   const T = user.frames.length - 1 || 1;
   ctx.fillStyle = "#18181b";
@@ -194,7 +194,7 @@ export function renderTelemetryCard(
     ctx.fillText(label, Math.min(Math.max(x - tw / 2, stripX), stripX + stripW - tw), stripY + 100);
   }
 
-  // ---- footer -----------------------------------------------------------
+  // footer
   ctx.fillStyle = "#5d5d66";
   ctx.font = "500 26px 'JetBrains Mono', monospace";
   ctx.fillText("pose: mediapipe 33pt · alignment: dtw · analysis: swingai engine", 72, H - 72);

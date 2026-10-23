@@ -29,7 +29,7 @@ export interface DrillSpec {
 }
 
 export const DRILL_LIBRARY: Record<string, DrillSpec> = {
-  // ---------------- HEAD & SPINE ----------------------------------------
+  // Head & spine
   head_sway: {
     title: "Head Against Wall Drill",
     description: [
@@ -81,7 +81,7 @@ export const DRILL_LIBRARY: Record<string, DrillSpec> = {
     recommendedReps: "3 × 10 mirror turns",
   },
 
-  // ---------------- SHOULDERS, ARMS & WRISTS ----------------------------
+  // Shoulders, arms & wrists
   casting: {
     title: "Pump Drill",
     description: [
@@ -113,7 +113,7 @@ export const DRILL_LIBRARY: Record<string, DrillSpec> = {
     recommendedReps: "3 × 10 frozen strikes",
   },
 
-  // ---------------- SHOULDERS/TRANSITION --------------------------------
+  // Shoulders / transition
   overswing: {
     title: "Three-Quarter Top Drill",
     description: [
@@ -135,7 +135,7 @@ export const DRILL_LIBRARY: Record<string, DrillSpec> = {
     recommendedReps: "3 × 8 pump sequences",
   },
 
-  // ---------------- HIPS, LEGS & FOOTWORK -------------------------------
+  // Hips, legs & footwork
   early_extension: {
     title: "Chair Behind Glutes Drill",
     description: [
@@ -197,7 +197,7 @@ export const DRILL_LIBRARY: Record<string, DrillSpec> = {
     recommendedReps: "15 balls at 60%",
   },
 
-  // ---------------- SEQUENCING ------------------------------------------
+  // Sequencing
   kinematic_sequence: {
     title: "Step-Change-of-Direction Drill",
     description: [
@@ -222,12 +222,9 @@ export const GENERIC_DRILL: DrillSpec = {
 };
 
 
-// ---------------------------------------------------------------------------
-// Pro model swing references — "Watch Pro Model Swing" (V5)
-// Embedded via YouTube's privacy-enhanced search-playlist embeds so links
-// never go stale; each fault points to a tour player famous for the correct
-// pattern.
-// ---------------------------------------------------------------------------
+// Pro model swing references — "Watch Pro Model Swing" (V5). Embedded via
+// YouTube's privacy-enhanced search-playlist embeds so links never go stale;
+// each fault points to a tour player famous for the correct pattern.
 export interface ProModel {
   readonly pro: string;
   readonly focus: string;

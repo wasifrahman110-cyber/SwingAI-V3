@@ -105,7 +105,7 @@ def detect_faults(
     mid_down = p.downswing
     down_lo, down_hi = p.top_of_backswing, p.impact + 1
 
-    # ---------------- 1. HEAD & SPINE AXIS --------------------------------
+    # 1. Head & spine axis
     # 1) Head sway (address -> top) — loosened to 4.5 in AND required to be
     #    SUSTAINED (> 3 consecutive frames) so a single-frame landmark jump
     #    can never flag an athletic tour move.
@@ -144,7 +144,7 @@ def detect_faults(
             f"Your spine angle changed {delta_imp:.1f}° between address and impact "
             "(tolerance ≤ 8°).")
 
-    # ---------------- 2. SHOULDER PLANE & TORSO ---------------------------
+    # 2. Shoulder plane & torso
     # 6) Reverse spine angle (upper body leaning toward the target at the top)
     lean_in = ((sho_x[p.top_of_backswing] - hip_x[p.top_of_backswing])
                - (sho_x[p.setup] - hip_x[p.setup])) / IN
@@ -178,7 +178,7 @@ def detect_faults(
             "Your shoulders started uncoiling before your hips moved — transition must "
             "sequence from the ground up (hips lead, shoulders follow).")
 
-    # ---------------- 3. ARMS, WRISTS & LAG -------------------------------
+    # 3. Arms, wrists & lag
     cock = _signed_wrist_cock(frames, L)
     # Polarity normalization: the wrist is maximally COCKED at the top, so the
     # sign of the cock there defines the "lagged" direction. This makes the
@@ -249,7 +249,7 @@ def detect_faults(
             f"Your wrists flipped {abs(flip_deg):.0f}° past neutral at contact — dynamic "
             "loft is added instead of compressed; shaft must lean forward at strike.")
 
-    # ---------------- 4. HIPS & PELVIS ------------------------------------
+    # 4. Hips & pelvis
     # 13) Hip slide past the lead ankle in the downswing
     slide_in = (float(np.max(hip_x[down_lo:down_hi])) - lead_ankle_x) / IN
     if slide_in > 1.0:
@@ -284,7 +284,7 @@ def detect_faults(
             "Your pelvis rotation stalled before impact — when the engine stops, the "
             "hands must flip to square the face. Keep the hips turning through strike.")
 
-    # ---------------- 5. LEGS, KNEES & WEIGHT -----------------------------
+    # 5. Legs, knees & weight
     # 16) Premature trail heel lift (before mid-downswing)
     heel_rise_in = (float(np.max(trail_heel_y[down_lo: mid_down + 1])) - float(trail_heel_y[p.setup])) / IN
     if heel_rise_in > 2.5:
@@ -302,7 +302,7 @@ def detect_faults(
             f"Your lead knee dove {collapse_in:.1f} in toward the trail leg in the backswing "
             "(tolerance ≤ 2.0 in) — keep its flex stable to preserve the lower-body coil.")
 
-    # ---------------- V2 carry-overs --------------------------------------
+    # V2 carry-overs
     # Backswing sway (lateral drift away from target)
     hip_sway = np.asarray(metrics.hip_sway)
     sway_bw_in = -float(np.min(hip_sway[p.setup: p.top_of_backswing + 1])) * PLAYER_HEIGHT_IN

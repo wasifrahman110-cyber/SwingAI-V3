@@ -25,9 +25,7 @@ from typing import Dict, List, Sequence, Tuple
 
 import numpy as np
 
-# ---------------------------------------------------------------------------
 # MediaPipe Pose landmark indices (33-point topology)
-# ---------------------------------------------------------------------------
 NOSE = 0
 LEFT_EYE_INNER, LEFT_EYE, LEFT_EYE_OUTER = 1, 2, 3
 RIGHT_EYE_INNER, RIGHT_EYE, RIGHT_EYE_OUTER = 4, 5, 6
@@ -48,9 +46,7 @@ LEFT_FOOT_INDEX, RIGHT_FOOT_INDEX = 31, 32
 EPS = 1e-9
 
 
-# ---------------------------------------------------------------------------
 # Primitive vector operations
-# ---------------------------------------------------------------------------
 def angle_between(u: np.ndarray, v: np.ndarray) -> float:
     """
     Angle (degrees) between 3-D vectors u and v:
@@ -120,9 +116,7 @@ def moving_average(x: np.ndarray, window: int = 5) -> np.ndarray:
     return out
 
 
-# ---------------------------------------------------------------------------
 # Normalization
-# ---------------------------------------------------------------------------
 @dataclass
 class NormalizationResult:
     frames: np.ndarray          # (T, 33, 4) normalized
@@ -176,9 +170,7 @@ class PoseNormalizer:
         return NormalizationResult(frames=out, scale=scale, pelvis_centers=pelvis)
 
 
-# ---------------------------------------------------------------------------
 # Per-frame metric extraction
-# ---------------------------------------------------------------------------
 @dataclass
 class SwingMetrics:
     """Time-series metrics for one swing. All arrays have length T."""
@@ -318,9 +310,7 @@ def compute_metrics(frames: np.ndarray, lead_side: str = "left") -> SwingMetrics
     )
 
 
-# ---------------------------------------------------------------------------
 # Deviation matrix (user vs pro along a DTW path)
-# ---------------------------------------------------------------------------
 @dataclass
 class DeviationFrame:
     user_frame: int

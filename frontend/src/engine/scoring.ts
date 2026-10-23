@@ -72,9 +72,7 @@ export function computeScore(
   };
 }
 
-// ---------------------------------------------------------------------------
 // Center-of-pressure estimate + smash-factor heuristic (V5 metric card)
-// ---------------------------------------------------------------------------
 export interface CopEstimate {
   readonly leadPct: number;
   readonly trailPct: number;
@@ -122,9 +120,7 @@ export function smashBand(smash: number): SmashBand {
   return "leak";
 }
 
-// ---------------------------------------------------------------------------
 // Face-on impact metrics (V5 multi-angle suite)
-// ---------------------------------------------------------------------------
 export interface ImpactMetrics {
   /** Forward shaft lean at impact in degrees (+ = toward target); null when
    *  hand landmarks are unresolved. Iron compression target: 5–12°. */

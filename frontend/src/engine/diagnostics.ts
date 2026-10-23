@@ -107,7 +107,7 @@ export function detectFaults18(
   const downHi = p.impact + 1;
   const midDown = p.downswing;
 
-  // ---- 1. HEAD & SPINE --------------------------------------------------
+  // 1. Head & spine
   // Head sway — loosened to 4.5 in AND required to be SUSTAINED (> 3
   // consecutive frames) so single-frame landmark jumps never flag.
   {
@@ -144,7 +144,7 @@ export function detectFaults18(
       `Your spine angle changed ${deltaImp.toFixed(1)}° between address and impact (tolerance ≤ 8°).`);
   }
 
-  // ---- 2. SHOULDERS & TORSO ---------------------------------------------
+  // 2. Shoulders & torso
   const leanIn =
     ((shoX[p.top_of_backswing] as number) - (hipX[p.top_of_backswing] as number)
       - ((shoX[p.setup] as number) - (hipX[p.setup] as number))) / IN;
@@ -173,7 +173,7 @@ export function detectFaults18(
     }
   }
 
-  // ---- 3. ARMS, WRISTS & LAG --------------------------------------------
+  // 3. Arms, wrists & lag
   const cock = signedWristCock(F, L, p.top_of_backswing);
   const wristAngle = cock.map((c) => 180 - Math.abs(c));
 
@@ -244,7 +244,7 @@ export function detectFaults18(
       `Your wrists flipped ${Math.abs(flipDeg).toFixed(0)}° past neutral at contact — loft is added instead of compressed.`);
   }
 
-  // ---- 4. HIPS & PELVIS ---------------------------------------------------
+  // 4. Hips & pelvis
   const slideIn = (maxIn(hipX, downLo, downHi) - leadAnkleX) / IN;
   if (slideIn > 1.0) {
     add("hip_slide", "Hip Slide", "major", "downswing", slideIn, 1.0, "in",
@@ -276,7 +276,7 @@ export function detectFaults18(
     }
   }
 
-  // ---- 5. LEGS, KNEES & WEIGHT --------------------------------------------
+  // 5. Legs, knees & weight
   const heelRiseIn = (maxIn(trailHeelY, downLo, midDown + 1) - (trailHeelY[p.setup] as number)) / IN;
   if (heelRiseIn > 2.5) {
     add("trail_heel_lift", "Premature Trail Heel Lift", "minor", "downswing", heelRiseIn, 2.5, "in",
@@ -289,7 +289,7 @@ export function detectFaults18(
       `Your lead knee dove ${collapseIn.toFixed(1)} in toward the trail leg in the backswing (tolerance ≤ 2.0 in).`);
   }
 
-  // ---- V2 carry-overs ------------------------------------------------------
+  // V2 carry-overs
   const swayBwIn = -minIn(m.hipSway, p.setup, p.top_of_backswing + 1) * PLAYER_HEIGHT_IN;
   if (swayBwIn > 2.5) {
     add("sway", "Hip Sway (Backswing)", "major", "top_of_backswing", swayBwIn, 2.5, "in",

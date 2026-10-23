@@ -35,9 +35,7 @@ const storage = (): Storage | null => {
   }
 };
 
-// ---------------------------------------------------------------------------
 // Sessions
-// ---------------------------------------------------------------------------
 const round4 = (v: number): number => Math.round(v * 10_000) / 10_000;
 
 const compactSwing = (s: SwingSequence): SwingSequence => ({
@@ -99,9 +97,7 @@ export function deleteSession(id: string): void {
   );
 }
 
-// ---------------------------------------------------------------------------
 // Journal
-// ---------------------------------------------------------------------------
 export function loadJournal(): JournalEntry[] {
   return safeParse<JournalEntry[]>(storage()?.getItem(JOURNAL_KEY) ?? null, []);
 }

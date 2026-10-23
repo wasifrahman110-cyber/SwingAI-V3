@@ -620,7 +620,6 @@ export function SwingDetailScreen({
   );
 }
 
-// ---------------------------------------------------------------------------
 /** V5 metric card: CoP load bar + smash-factor estimate, below the errors. */
 function CopSmashCard({
   analysis,

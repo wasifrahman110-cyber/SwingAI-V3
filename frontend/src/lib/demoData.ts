@@ -189,9 +189,7 @@ export function demoSwings(): { user: SwingSequence; pro: SwingSequence } {
   };
 }
 
-// ---------------------------------------------------------------------------
 // Built-in reference library (synthetic model swings — no licensed footage)
-// ---------------------------------------------------------------------------
 export interface ReferenceClip {
   readonly id: string;
   readonly name: string;
@@ -220,9 +218,7 @@ export const REFERENCE_LIBRARY: readonly ReferenceClip[] = [
   },
 ] as const;
 
-// ---------------------------------------------------------------------------
 // Dashboard demo telemetry (Home screen)
-// ---------------------------------------------------------------------------
 export interface DashboardData {
   readonly swingIndex: number;
   readonly swingIndexDelta: number;

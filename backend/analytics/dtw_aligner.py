@@ -29,9 +29,7 @@ from .metrics import (
 PHASE_NAMES = ["setup", "top_of_backswing", "downswing", "impact", "follow_through"]
 
 
-# ---------------------------------------------------------------------------
 # Core DTW
-# ---------------------------------------------------------------------------
 @dataclass
 class DTWResult:
     path: List[Tuple[int, int]]      # monotonic warp path [(user_i, pro_j), ...]
@@ -116,9 +114,7 @@ def dtw_align(
     )
 
 
-# ---------------------------------------------------------------------------
 # Swing-phase segmentation
-# ---------------------------------------------------------------------------
 @dataclass
 class SwingPhases:
     """Frame indices of the 5 critical checkpoints of one swing."""

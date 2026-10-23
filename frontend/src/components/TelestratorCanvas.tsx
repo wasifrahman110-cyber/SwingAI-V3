@@ -68,7 +68,8 @@ export function TelestratorCanvas(props: TelestratorProps) {
   const draftRef = useRef<Annotation | null>(null);
   const dragRef = useRef<{ id: string; part: "a" | "b" | "c" | "r" } | null>(null);
 
-  // ---- render loop ------------------------------------------------------
+  // Render loop — keep the buffer append-only per the persistence contract
+  // below; nothing here should ever clear annotations outright.
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -143,7 +144,8 @@ export function TelestratorCanvas(props: TelestratorProps) {
     return () => cancelAnimationFrame(raf);
   }, []);
 
-  // ---- pointer interaction ---------------------------------------------
+  // Pointer interaction — separate effect so re-renders from prop changes
+  // (color, tool, lockToFrame) don't tear down and rebind listeners.
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;

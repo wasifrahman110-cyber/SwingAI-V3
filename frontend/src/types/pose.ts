@@ -167,9 +167,7 @@ export interface AnalysisResult {
   readonly source: "backend" | "local";
 }
 
-// ---------------------------------------------------------------------------
 // Telestrator annotations
-// ---------------------------------------------------------------------------
 export interface AnnoPoint {
   readonly x: number; // normalized 0..1 within the player
   readonly y: number;
@@ -211,9 +209,7 @@ export const TELESTRATOR_COLORS = [
   "#FFFFFF", // pure white
 ] as const;
 
-// ---------------------------------------------------------------------------
 // Sessions & journal (localStorage persistence)
-// ---------------------------------------------------------------------------
 export interface SessionRecord {
   readonly id: string;
   readonly dateISO: string;
