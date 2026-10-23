@@ -349,7 +349,8 @@ button {
   z-index: 7; /* above the telestrator overlay so DRAW/GHOST stay tappable */
 }
 .hud-chip {
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
+  font-variant-numeric: tabular-nums;
   font-size: 10.5px;
   font-weight: 600;
   color: var(--text-dim);
@@ -381,12 +382,11 @@ button {
   gap: 10px;
 }
 .controls label {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0;
   color: var(--muted);
-  text-transform: uppercase;
-  min-width: 52px;
+  min-width: 46px;
 }
 input[type="range"] {
   -webkit-appearance: none;
@@ -417,7 +417,8 @@ input[type="range"]::-moz-range-thumb {
   cursor: pointer;
 }
 .frame-readout {
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
+  font-variant-numeric: tabular-nums;
   font-size: 11px;
   color: var(--muted);
   min-width: 76px;
@@ -799,12 +800,13 @@ input[type="range"]::-moz-range-thumb {
   padding: 3px;
 }
 .mode-chip {
-  font-family: var(--font-mono);
-  font-size: 9.5px;
-  font-weight: 700;
-  letter-spacing: 0.05em;
+  font-family: var(--font-ui);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0;
   color: var(--muted);
-  padding: 6px 10px;
+  padding: 7px 13px;
   border-radius: 999px;
   transition: all 0.15s ease;
   white-space: nowrap;
@@ -823,7 +825,8 @@ input[type="range"]::-moz-range-thumb {
 .ref-name-line {
   margin: 6px 20px 0;
   color: #00e5ff;
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
+  font-variant-numeric: tabular-nums;
   font-size: 10.5px;
   font-weight: 600;
   letter-spacing: 0.04em;
@@ -835,7 +838,8 @@ input[type="range"]::-moz-range-thumb {
   gap: 4px;
 }
 .speed-chip {
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
+  font-variant-numeric: tabular-nums;
   font-size: 10.5px;
   font-weight: 700;
   color: var(--muted);
@@ -851,7 +855,8 @@ input[type="range"]::-moz-range-thumb {
   border-color: var(--accent);
 }
 .align-impact {
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
+  font-variant-numeric: tabular-nums;
   font-size: 9.5px;
   font-weight: 700;
   letter-spacing: 0.05em;
@@ -1335,3 +1340,310 @@ input[type="range"]::-moz-range-thumb {
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
 }
+
+/* ---------- sign-in / welcome ---------- */
+.signin-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 200;
+  background: rgba(5, 5, 6, 0.92);
+  backdrop-filter: blur(14px);
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+.signin-card {
+  width: 100%;
+  max-width: 360px;
+  background: var(--bg-1);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-lg);
+  padding: 26px 22px 22px;
+}
+.signin-mark {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent, #00e5ff);
+  margin-bottom: 14px;
+}
+.signin-title {
+  font-size: 23px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  margin-bottom: 6px;
+}
+.signin-sub {
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--muted);
+  margin-bottom: 22px;
+}
+.signin-label {
+  display: block;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+.signin-input {
+  width: 100%;
+  min-height: 46px;
+  padding: 12px 14px;
+  margin-bottom: 20px;
+  font-size: 16px; /* 16px stops iOS Safari zooming the viewport on focus */
+  font-family: inherit;
+  color: var(--text);
+  background: var(--bg-2, #16161a);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-md);
+  outline: none;
+}
+.signin-input:focus {
+  border-color: var(--accent, #00e5ff);
+}
+.signin-seg {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 24px;
+}
+.signin-seg-btn {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  align-items: flex-start;
+  min-height: 56px;
+  padding: 10px 12px;
+  font-size: 13.5px;
+  font-weight: 600;
+  font-family: inherit;
+  color: var(--muted);
+  background: var(--bg-2, #16161a);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  text-align: left;
+}
+.signin-seg-btn.on {
+  color: var(--text);
+  border-color: var(--accent, #00e5ff);
+  background: rgba(0, 229, 255, 0.08);
+}
+.signin-seg-sub {
+  font-size: 11px;
+  font-weight: 500;
+  opacity: 0.7;
+}
+.signin-go {
+  width: 100%;
+  min-height: 48px;
+  font-size: 15px;
+  font-weight: 650;
+  font-family: inherit;
+  color: #04141a;
+  background: var(--accent, #00e5ff);
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+.signin-go:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* ---------- in-frame transport (single view) ---------- */
+.video-transport {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 22px 12px 10px;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.78), rgba(0, 0, 0, 0));
+  pointer-events: auto;
+}
+.video-transport .scrubber,
+.video-transport > div:not([class]) {
+  flex: 1;
+  min-width: 0;
+}
+.vt-play,
+.vt-audio {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  border: none;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.14);
+  cursor: pointer;
+  font-size: 14px;
+}
+.vt-audio.on {
+  background: rgba(0, 229, 255, 0.24);
+}
+.vt-time {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+/* ---------- feedback blanket ---------- */
+.feedback-layer {
+  position: absolute;
+  inset: 0;                 /* definite height so the sheet % resolves */
+  z-index: 7;
+  display: flex;
+  flex-direction: column;
+  pointer-events: none;
+}
+.feedback-bar {
+  position: relative;
+  z-index: 2;
+  width: 100%;
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 13px;
+  border: none;
+  cursor: pointer;
+  pointer-events: auto;
+  font-family: inherit;
+  color: #fff;
+  text-align: left;
+  background: rgba(10, 10, 12, 0.82);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.09);
+}
+.fb-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #30d158;
+}
+.fb-dot[data-sev="critical"] { background: #ff3b30; }
+.fb-dot[data-sev="major"]    { background: #ff9500; }
+.fb-dot[data-sev="minor"]    { background: #ffd60a; }
+.fb-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fb-caret {
+  flex: 0 0 auto;
+  font-size: 9px;
+  opacity: 0.65;
+}
+.feedback-sheet {
+  pointer-events: auto;
+  max-height: 0;
+  overflow-y: auto;
+  opacity: 0;
+  transition: max-height 0.32s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.22s ease;
+  background: rgba(10, 10, 12, 0.88);
+  backdrop-filter: blur(12px);
+  -webkit-overflow-scrolling: touch;
+}
+.feedback-layer.open .feedback-sheet {
+  max-height: 58%;
+  opacity: 1;
+}
+.fb-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 11px 13px;
+  border: none;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  background: transparent;
+  color: #fff;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.fb-sev {
+  flex: 0 0 auto;
+  font-size: 9.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+}
+.fb-sev.sev-critical { color: #ff6b61; background: rgba(255, 59, 48, 0.16); }
+.fb-sev.sev-major    { color: #ffb046; background: rgba(255, 149, 0, 0.16); }
+.fb-sev.sev-minor    { color: #ffe071; background: rgba(255, 214, 10, 0.14); }
+.fb-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fb-phase {
+  flex: 0 0 auto;
+  font-size: 10.5px;
+  color: rgba(255, 255, 255, 0.5);
+}
+.fb-meas {
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: rgba(255, 255, 255, 0.82);
+}
+.fb-empty {
+  padding: 14px;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.66);
+}
+
+/* ---------- journal composer ---------- */
+.journal-input-lg {
+  min-height: 210px;
+  font-size: 15px;
+  line-height: 1.55;
+  resize: vertical;
+}
+
+/* ---------- touch targets & tablet scaling ---------- */
+@media (pointer: coarse) {
+  .icon-btn,
+  .mode-chip,
+  .speed-chip,
+  .tab,
+  .align-impact {
+    min-height: 34px;
+  }
+  .tele-btn {
+    min-width: 38px;
+    min-height: 38px;
+  }
+}
+@media (min-width: 820px) {
+  .signin-card { max-width: 420px; }
+  .fb-text { font-size: 13.5px; }
+  .journal-input-lg { min-height: 260px; }
+}
+
+.tele-btn.danger { color: #ff6b61; }
+.tele-btn.danger:hover { background: rgba(255, 59, 48, 0.14); }

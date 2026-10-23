@@ -38,6 +38,12 @@ export interface SwingCanvasProps {
   ghostOn: boolean;
   video: HTMLVideoElement | null;
   referenceVideo: HTMLVideoElement | null;
+  /** Independent manual override for the reference pane's frame index (dual
+   *  frame-scrub feature). Undefined/null = unchanged default behavior: the
+   *  reference frame is derived from `frame` via DTW + frameOffset, exactly
+   *  as before. Only set when the caller has explicitly un-synced the two
+   *  playheads. */
+  refFrameOverride?: number | null;
   interactive: boolean; // false while the telestrator captures the pointer
   /** Multi-angle mode: down-the-line clip rendered beside the face-on clip. */
   multiView: boolean;
@@ -264,11 +270,19 @@ export function SwingCanvas(props: SwingCanvasProps) {
     // ghost overlay on the user pane (dual mode option)
     let refFi = 0;
     if (dual && reference) {
-      refFi = mappedReferenceFrame(analysis, fi, p.frameOffset, reference.frames.length);
+      refFi =
+        p.refFrameOverride != null
+          ? Math.max(0, Math.min(reference.frames.length - 1, Math.round(p.refFrameOverride)))
+          : mappedReferenceFrame(analysis, fi, p.frameOffset, reference.frames.length);
       const refF = reference.frames[refFi];
       if (p.ghostOn && refF) {
         const xf = ghostTransform(userF, refF, userPane);
         ctx.save();
+        // Clip to the pane: the ghost is scaled from the reference skeleton and
+        // can otherwise extend past the frame edges in split view.
+        ctx.beginPath();
+        ctx.rect(userPane.x, userPane.y, userPane.w, userPane.h);
+        ctx.clip();
         ctx.globalAlpha = p.ghostOpacity;
         ctx.strokeStyle = "#f5f5f7";
         ctx.lineWidth = BONE_W;
@@ -350,7 +364,13 @@ export function SwingCanvas(props: SwingCanvasProps) {
       const p = propsRef.current;
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
       const cssW = canvas.clientWidth || 400;
-      const cssH = Math.round(cssW * 0.72);
+      // Portrait-leaning viewport: a phone is held vertically and the swing is
+      // a vertical motion, so give it the height. Wide screens (tablet/desktop)
+      // fall back to a shallower box so the frame does not run off-screen.
+      const tall = window.innerWidth < 900;
+      const ratio = tall ? 1.16 : 0.72;
+      const maxH = Math.max(240, Math.round(window.innerHeight * 0.58));
+      const cssH = Math.min(Math.round(cssW * ratio), maxH);
       if (canvas.width !== Math.round(cssW * dpr) || canvas.height !== Math.round(cssH * dpr)) {
         canvas.width = Math.round(cssW * dpr);
         canvas.height = Math.round(cssH * dpr);

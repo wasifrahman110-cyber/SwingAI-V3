@@ -1,8 +1,8 @@
 /**
- * SwingAI V3 — 20-rule biomechanical diagnostic matrix (TypeScript mirror of
+ * SwingAI V3 — 17-rule biomechanical diagnostic matrix (TypeScript mirror of
  * backend/analytics/biomechanics.py).
  *
- * 18 spec rules across five body groups + the V2 carry-overs (backswing sway,
+ * 15 spec rules across five body groups + the V2 carry-overs (backswing sway,
  * kinematic sequence). Every rule is self-contained, runs on SavGol-smoothed
  * series, and is verified to stay silent on the clean model swings.
  */

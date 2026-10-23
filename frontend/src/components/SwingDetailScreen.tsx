@@ -18,6 +18,7 @@ import type {
 } from "../types/pose.ts";
 import { TELESTRATOR_COLORS } from "../types/pose.ts";
 import { downloadTelemetryCard } from "../lib/telemetryCard.ts";
+import { downloadSwingReport } from "../lib/swingReport.ts";
 import { normalizeSwing } from "../lib/engine.ts";
 import {
   computeImpactMetrics,
@@ -29,7 +30,7 @@ import { DrillSheet } from "./DrillSheet.tsx";
 import { FixList } from "./FixList.tsx";
 import { KinematicsChart } from "./KinematicsChart.tsx";
 import { Scrubber } from "./Scrubber.tsx";
-import { SwingCanvas } from "./SwingCanvas.tsx";
+import { SwingCanvas, mappedReferenceFrame } from "./SwingCanvas.tsx";
 import { TelestratorCanvas } from "./TelestratorCanvas.tsx";
 import { TelestratorToolbar } from "./TelestratorToolbar.tsx";
 import { ChevronLeft, Kebab, Pause, Play } from "./icons.tsx";
@@ -56,6 +57,23 @@ interface SwingDetailScreenProps {
   onSetMode: (mode: "solo" | "dual") => void;
   onNeedReference: () => void;
   onNeedDtl: () => void;
+}
+
+const UUIDISH = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+const NOISY = /^(img|vid|video|mov|image|clip|pxl|dsc|screen[\s_-]?recording)[\s_-]?[\d._-]*$/i;
+
+/**
+ * Phone camera rolls hand us names like "04DBC3C2-1271-4EB1-..." or
+ * "IMG_4417". Those are not labels a golfer recognises, so fall back to a
+ * readable description instead of printing the raw file name.
+ */
+function prettyClipName(raw: string | null): string | null {
+  if (!raw) return null;
+  const t = raw.replace(/\.[^.]+$/, "").trim();
+  if (t === "" || UUIDISH.test(t) || NOISY.test(t) || /^[0-9a-f-]{16,}$/i.test(t)) {
+    return "Uploaded clip";
+  }
+  return t.replace(/[_-]+/g, " ").slice(0, 32);
 }
 
 const fmtClock = (): string => {
@@ -96,7 +114,14 @@ export function SwingDetailScreen({
   const [openFault, setOpenFault] = useState<Fault | null>(null);
   const [viewMulti, setViewMulti] = useState(false);
   const [syncImpact, setSyncImpact] = useState(false);
+  // Dual frame-scrub: syncPlayheads=true (default) preserves the existing
+  // DTW-linked reference-frame behavior exactly. Setting it false lets
+  // refFrameOverride drive the reference pane independently of `frame`.
+  const [syncPlayheads, setSyncPlayheads] = useState(true);
+  const [refFrameOverride, setRefFrameOverride] = useState<number | null>(null);
   const [voiceOn, setVoiceOn] = useState(false);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [exportMenu, setExportMenu] = useState(false);
   const [bookmarks, setBookmarks] = useState<ReadonlySet<string>>(new Set());
   const dateLabel = useRef(fmtClock());
 
@@ -145,24 +170,46 @@ export function SwingDetailScreen({
     }
   }, [initialPhase, analysis]);
 
-  // keep uploaded videos in sync with the playhead
+  // Keep the uploaded videos locked to the playhead. This runs while PLAYING
+  // too: the rAF loop advances `frame` every tick, so driving currentTime from
+  // the frame index is what makes the real footage move with the skeleton, and
+  // is what makes a synced dual comparison show both swings executing at the
+  // same time rather than only shifting the ghost overlay.
   useEffect(() => {
-    if (video && !playing) {
+    if (video) {
       const t = frame / user.fps;
       if (Math.abs(video.currentTime - t) > 0.02) video.currentTime = t;
     }
-    if (referenceVideo && reference && !playing && analysis?.alignment) {
-      const rf = Math.max(
-        0,
-        Math.min(
-          reference.frames.length - 1,
-          (analysis.alignment.userToPro[frame] ?? 0) + frameOffset,
-        ),
-      );
-      const rt = rf / reference.fps;
-      if (Math.abs(referenceVideo.currentTime - rt) > 0.02) referenceVideo.currentTime = rt;
+    if (referenceVideo && reference) {
+      if (syncPlayheads) {
+        const refLen = reference.frames.length;
+        // DTW map when we have one, proportional map when we do not, so the
+        // reference clip still tracks the playhead before analysis lands.
+        const mapped = analysis?.alignment
+          ? (analysis.alignment.userToPro[frame] ?? 0)
+          : Math.round((frame / Math.max(user.frames.length - 1, 1)) * (refLen - 1));
+        const rf = Math.max(0, Math.min(refLen - 1, mapped + frameOffset));
+        const rt = rf / reference.fps;
+        if (Math.abs(referenceVideo.currentTime - rt) > 0.02) referenceVideo.currentTime = rt;
+      } else if (refFrameOverride !== null) {
+        // independent playhead: reference video follows refFrameOverride, not `frame`
+        const rt = refFrameOverride / reference.fps;
+        if (Math.abs(referenceVideo.currentTime - rt) > 0.02) referenceVideo.currentTime = rt;
+      }
     }
-  }, [frame, playing, video, referenceVideo, reference, analysis, frameOffset, user.fps]);
+  }, [
+    frame,
+    playing,
+    video,
+    referenceVideo,
+    reference,
+    analysis,
+    frameOffset,
+    user.fps,
+    user.frames.length,
+    syncPlayheads,
+    refFrameOverride,
+  ]);
 
   const onFrameChange = useCallback((f: number) => setFrame(f), []);
   const onTogglePlay = useCallback(() => setPlaying((p) => !p), []);
@@ -202,6 +249,48 @@ export function SwingDetailScreen({
   const dual = mode === "dual" && reference !== null;
   const multi = viewMulti && dtl !== null;
   const annotating = teleTool !== "off";
+
+  // Dual frame-scrub: the reference frame currently in view, whether linked
+  // (DTW + frameOffset, existing behavior) or independently overridden.
+  const refLength = reference?.frames.length ?? 0;
+  const linkedRefFrame = dual ? mappedReferenceFrame(analysis, frame, frameOffset, refLength) : 0;
+  const refFrame = syncPlayheads ? linkedRefFrame : (refFrameOverride ?? linkedRefFrame);
+
+  const stepFrame = useCallback(
+    (delta: number) => {
+      setPlaying(false);
+      setFrame((f) => Math.max(0, Math.min(T - 1, f + delta)));
+    },
+    [T],
+  );
+
+  const onScrubRef = useCallback(
+    (f: number) => {
+      setPlaying(false);
+      setRefFrameOverride(Math.max(0, Math.min(Math.max(refLength - 1, 0), f)));
+    },
+    [refLength],
+  );
+
+  const stepRefFrame = useCallback(
+    (delta: number) => {
+      if (syncPlayheads) return; // stepping only applies while independently scrubbing
+      setPlaying(false);
+      setRefFrameOverride((prev) => {
+        const base = prev ?? linkedRefFrame;
+        return Math.max(0, Math.min(Math.max(refLength - 1, 0), base + delta));
+      });
+    },
+    [syncPlayheads, linkedRefFrame, refLength],
+  );
+
+  const toggleSyncPlayheads = useCallback(() => {
+    setSyncPlayheads((v) => {
+      const next = !v;
+      if (next) setRefFrameOverride(null); // re-linking: drop the stale override
+      return next;
+    });
+  }, []);
 
   // face-on impact metrics (CoP, shaft lean, hip lead) — memo on analysis
   const impactMetrics: ImpactMetrics | null = useMemo(() => {
@@ -326,7 +415,7 @@ export function SwingDetailScreen({
               switchMode("solo");
             }}
           >
-            SINGLE
+            Single
           </button>
           <button
             role="tab"
@@ -337,7 +426,7 @@ export function SwingDetailScreen({
               switchMode("dual");
             }}
           >
-            DUAL
+            Dual
           </button>
           <button
             role="tab"
@@ -352,14 +441,14 @@ export function SwingDetailScreen({
               setViewMulti(true);
             }}
           >
-            MULTI-ANGLE
+            Multi-angle
           </button>
         </div>
         <button
           className="icon-btn"
-          aria-label="export telemetry card"
-          title="Export telemetry card"
-          onClick={() => analysis && downloadTelemetryCard(user, analysis, playerName)}
+          aria-label="export"
+          title="Export"
+          onClick={() => analysis && setExportMenu((v) => !v)}
         >
           <Kebab />
         </button>
@@ -380,6 +469,7 @@ export function SwingDetailScreen({
           ghostOpacity={ghostOpacity}
           video={video}
           referenceVideo={referenceVideo}
+          refFrameOverride={syncPlayheads ? null : refFrame}
           interactive={!annotating}
           multiView={viewMulti}
           dtl={dtl}
@@ -420,7 +510,7 @@ export function SwingDetailScreen({
               onClick={() => setGhostOn((g) => !g)}
               style={{ pointerEvents: "auto", cursor: "pointer" }}
             >
-              GHOST
+              Ghost
             </button>
           )}
           <button
@@ -428,9 +518,9 @@ export function SwingDetailScreen({
             onClick={() => setTeleTool(annotating ? "off" : "pen")}
             style={{ pointerEvents: "auto", cursor: "pointer" }}
           >
-            DRAW
+            Draw
           </button>
-          <span className="hud-chip">{isDemo ? "DEMO" : "YOU"}</span>
+          <span className="hud-chip">{isDemo ? "Demo" : "You"}</span>
         </div>
         {!playing && !annotating && (
           <div className="player-overlay">
@@ -439,6 +529,77 @@ export function SwingDetailScreen({
             </button>
           </div>
         )}
+
+        {/* Feedback blanket: a thin bar pinned to the top of the frame that
+            pulls a translucent fault panel down over the still-playing video. */}
+        {analysis && (
+          <div className={`feedback-layer ${feedbackOpen ? "open" : ""}`}>
+            <button
+              className="feedback-bar"
+              onClick={() => setFeedbackOpen((v) => !v)}
+              aria-expanded={feedbackOpen}
+              aria-label={feedbackOpen ? "hide swing feedback" : "show swing feedback"}
+            >
+              <span className="fb-dot" data-sev={analysis.faults[0]?.severity ?? "clean"} />
+              <span className="fb-text">
+                {analysis.faults.length === 0
+                  ? "No major faults detected"
+                  : `${analysis.faults.length} fault${analysis.faults.length > 1 ? "s" : ""} found`}
+                {analysis.faults[0] ? ` · ${analysis.faults[0].name}` : ""}
+              </span>
+              <span className="fb-caret">{feedbackOpen ? "▲" : "▼"}</span>
+            </button>
+            <div className="feedback-sheet" aria-hidden={!feedbackOpen}>
+              {analysis.faults.length === 0 && (
+                <p className="fb-empty">Nothing flagged on this swing. Keep that pattern.</p>
+              )}
+              {analysis.faults.map((f) => (
+                <button key={f.code} className="fb-item" onClick={() => setOpenFault(f)}>
+                  <span className={`fb-sev sev-${f.severity}`}>{f.severity}</span>
+                  <span className="fb-name">{f.name}</span>
+                  <span className="fb-phase">{f.phase.replace(/_/g, " ")}</span>
+                  <span className="fb-meas">
+                    {f.measured}
+                    {f.unit === "deg" ? "°" : f.unit === "in" ? '"' : ""}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* In-frame transport (single view), the way a phone video player works */}
+        {!dual && !multi && !annotating && (
+          <div className="video-transport">
+            <button
+              className="vt-play"
+              onClick={onTogglePlay}
+              aria-label={playing ? "pause" : "play"}
+            >
+              {playing ? <Pause size={17} /> : <Play size={17} />}
+            </button>
+            <Scrubber totalFrames={T} frame={frame} analysis={analysis} onScrub={onScrub} />
+            <span className="vt-time">
+              {String(frame).padStart(3, "0")}/{String(T - 1).padStart(3, "0")}
+            </span>
+            <button
+              className={`vt-audio ${voiceOn ? "on" : ""}`}
+              onClick={() => {
+                setVoiceOn((v) => {
+                  if (v && typeof window !== "undefined" && "speechSynthesis" in window) {
+                    window.speechSynthesis.cancel();
+                  }
+                  return !v;
+                });
+              }}
+              title="voice feedback: reads the top 2 faults after analysis"
+              aria-label="toggle voice feedback"
+            >
+              {voiceOn ? "🔊" : "🔇"}
+            </button>
+          </div>
+        )}
+
         <div className="swing-index-badge">
           <span className="num">{(analysis?.swingIndex ?? 0).toFixed(1)}</span>
           <span className="cap">Swing Index</span>
@@ -446,24 +607,26 @@ export function SwingDetailScreen({
       </div>
 
       {dual && referenceName && (
-        <div className="ref-name-line">vs {referenceName}</div>
+        <div className="ref-name-line">vs {prettyClipName(referenceName)}</div>
       )}
 
       <div className="controls">
-        <div className="row">
-          <button
-            className="icon-btn"
-            onClick={onTogglePlay}
-            aria-label={playing ? "pause" : "play"}
-            style={{ width: 32, height: 32 }}
-          >
-            {playing ? <Pause size={20} /> : <Play size={20} />}
-          </button>
-          <Scrubber totalFrames={T} frame={frame} analysis={analysis} onScrub={onScrub} />
-          <span className="frame-readout">
-            {String(frame).padStart(3, "0")}/{String(T - 1).padStart(3, "0")}
-          </span>
-        </div>
+        {(dual || multi) && (
+          <div className="row">
+            <button
+              className="icon-btn"
+              onClick={onTogglePlay}
+              aria-label={playing ? "pause" : "play"}
+              style={{ width: 32, height: 32 }}
+            >
+              {playing ? <Pause size={20} /> : <Play size={20} />}
+            </button>
+            <Scrubber totalFrames={T} frame={frame} analysis={analysis} onScrub={onScrub} />
+            <span className="frame-readout">
+              {String(frame).padStart(3, "0")}/{String(T - 1).padStart(3, "0")}
+            </span>
+          </div>
+        )}
         {(dual || multi) && (
           <div className="row">
             <label>Master</label>
@@ -486,9 +649,99 @@ export function SwingDetailScreen({
                 onClick={() => setSyncImpact((v) => !v)}
                 title="auto-derive the frame offset from detected impact keyframes"
               >
-                {syncImpact ? "◉ SYNC IMPACT" : "○ SYNC IMPACT"}
+                {syncImpact ? "◉ Sync impact" : "○ Sync impact"}
               </button>
             )}
+          </div>
+        )}
+        {dual && (
+          <div className="dual-scrub-block">
+            <div className="row">
+              <label htmlFor="scrub-a">You</label>
+              <button
+                className="icon-btn"
+                style={{ width: 26, height: 26 }}
+                onClick={() => stepFrame(-1)}
+                aria-label="user swing: step back one frame"
+                title="-1 frame"
+              >
+                ◀
+              </button>
+              <input
+                id="scrub-a"
+                type="range"
+                min={0}
+                max={Math.max(T - 1, 0)}
+                step={1}
+                value={frame}
+                onChange={(e) => {
+                  setPlaying(false);
+                  setFrame(Number(e.currentTarget.value));
+                }}
+                aria-label="user swing frame scrubber"
+              />
+              <button
+                className="icon-btn"
+                style={{ width: 26, height: 26 }}
+                onClick={() => stepFrame(1)}
+                aria-label="user swing: step forward one frame"
+                title="+1 frame"
+              >
+                ▶
+              </button>
+              <span className="frame-readout">{String(frame).padStart(3, "0")}</span>
+            </div>
+            <div className="row">
+              <label htmlFor="scrub-b">Ref</label>
+              <button
+                className="icon-btn"
+                style={{ width: 26, height: 26 }}
+                onClick={() => stepRefFrame(-1)}
+                disabled={syncPlayheads}
+                aria-label="reference swing: step back one frame"
+                title="-1 frame"
+              >
+                ◀
+              </button>
+              <input
+                id="scrub-b"
+                type="range"
+                min={0}
+                max={Math.max(refLength - 1, 0)}
+                step={1}
+                value={refFrame}
+                onChange={(e) => onScrubRef(Number(e.currentTarget.value))}
+                disabled={syncPlayheads}
+                aria-label="reference swing frame scrubber"
+                title={
+                  syncPlayheads
+                    ? "turn off Sync Playheads to scrub the reference swing independently"
+                    : undefined
+                }
+              />
+              <button
+                className="icon-btn"
+                style={{ width: 26, height: 26 }}
+                onClick={() => stepRefFrame(1)}
+                disabled={syncPlayheads}
+                aria-label="reference swing: step forward one frame"
+                title="+1 frame"
+              >
+                ▶
+              </button>
+              <span className="frame-readout">{String(refFrame).padStart(3, "0")}</span>
+              <button
+                className={`align-impact ${syncPlayheads ? "on-sync" : ""}`}
+                onClick={toggleSyncPlayheads}
+                title={
+                  syncPlayheads
+                    ? "playheads are linked (DTW-mapped) — click to scrub independently"
+                    : "playheads are independent — click to re-link to the user swing"
+                }
+              >
+                {syncPlayheads ? "◉ Linked" : "○ Independent"}
+              </button>
+            </div>
           </div>
         )}
         <div className="row">
@@ -503,21 +756,23 @@ export function SwingDetailScreen({
                 {s}×
               </button>
             ))}
-            <button
-              className={`speed-chip ${voiceOn ? "on" : ""}`}
-              onClick={() => {
-                setVoiceOn((v) => {
-                  if (v && typeof window !== "undefined" && "speechSynthesis" in window) {
-                    window.speechSynthesis.cancel();
-                  }
-                  return !v;
-                });
-              }}
-              title="voice feedback: reads the top 2 errors after analysis"
-              aria-label="toggle voice feedback"
-            >
-              🔊
-            </button>
+            {(dual || multi) && (
+              <button
+                className={`speed-chip ${voiceOn ? "on" : ""}`}
+                onClick={() => {
+                  setVoiceOn((v) => {
+                    if (v && typeof window !== "undefined" && "speechSynthesis" in window) {
+                      window.speechSynthesis.cancel();
+                    }
+                    return !v;
+                  });
+                }}
+                title="voice feedback: reads the top 2 errors after analysis"
+                aria-label="toggle voice feedback"
+              >
+                {voiceOn ? "🔊" : "🔇"}
+              </button>
+            )}
           </div>
           {dual && (
             <>
@@ -558,7 +813,7 @@ export function SwingDetailScreen({
               {frameOffset}f
             </span>
             <button className="align-impact" onClick={alignImpact}>
-              ALIGN IMPACT
+              Align impact
             </button>
           </div>
         )}
@@ -573,6 +828,8 @@ export function SwingDetailScreen({
           onSeek={onScrub}
         />
       )}
+
+      {analysis && impactMetrics && <CopSmashCard analysis={analysis} metrics={impactMetrics} />}
 
       <div className="tabs" role="tablist">
         {(
@@ -607,11 +864,41 @@ export function SwingDetailScreen({
         />
       )}
 
-      {analysis && (tab === "fixes" || tab === "bookmarked") && impactMetrics && (
-        <CopSmashCard analysis={analysis} metrics={impactMetrics} />
-      )}
-
       {analysis && tab === "metrics" && <MetricsTable analysis={analysis} frame={frame} />}
+
+      {exportMenu && analysis && (
+        <>
+          <div className="sheet-backdrop" onClick={() => setExportMenu(false)} />
+          <div className="upload-menu" role="menu" aria-label="export options">
+            <div className="grabber" />
+            <button
+              className="upload-option"
+              onClick={() => {
+                setExportMenu(false);
+                downloadSwingReport(user, analysis, playerName);
+              }}
+            >
+              <span className="uo-title">Coaching Report</span>
+              <span className="uo-sub">
+                Swing Index, every fault with your measurement against tolerance, and the
+                drill steps to fix each one. Opens in any browser, prints to PDF.
+              </span>
+            </button>
+            <button
+              className="upload-option"
+              onClick={() => {
+                setExportMenu(false);
+                downloadTelemetryCard(user, analysis, playerName);
+              }}
+            >
+              <span className="uo-title">Telemetry Card (PNG)</span>
+              <span className="uo-sub">
+                The shareable score card with your skeleton snapshot and phase strip.
+              </span>
+            </button>
+          </div>
+        </>
+      )}
 
       {openFault && analysis && (
         <DrillSheet fault={openFault} analysis={analysis} onClose={() => setOpenFault(null)} />

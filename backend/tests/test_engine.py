@@ -195,7 +195,7 @@ def main() -> int:
 
     clean = detect_faults(pro_n.frames, pro_m, pro_ph)
     clean_codes = {f.code for f in clean}
-    ok &= check(f"clean swing triggers ZERO of the 20 fault rules ({clean_codes or 'none'})",
+    ok &= check(f"clean swing triggers ZERO of the 17 fault rules ({clean_codes or 'none'})",
                 len(clean_codes) == 0)
 
     # --- V2 regression: spine retention must track DELTA from address -----

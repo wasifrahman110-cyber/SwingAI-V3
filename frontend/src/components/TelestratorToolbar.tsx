@@ -113,7 +113,7 @@ export function TelestratorToolbar({
           <path d="M20 9H10a6 6 0 000 12h3" />
         </svg>
       </button>
-      <button className="tele-btn" onClick={onClear} aria-label="clear all annotations" title="clear all">
+      <button className="tele-btn danger" onClick={onClear} aria-label="erase all annotations" title="erase all drawings">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
           <path d="M4 7h16M9 7V5h6v2m-8 0l1 13h8l1-13" />
         </svg>

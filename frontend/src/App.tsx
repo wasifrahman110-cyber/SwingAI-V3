@@ -5,13 +5,14 @@
  * reference swing, localStorage session persistence.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { DrillStudio } from "./components/DrillStudio.tsx";
 import { HomeScreen } from "./components/HomeScreen.tsx";
 import { ProgressScreen } from "./components/ProgressScreen.tsx";
 import { ReferenceModal } from "./components/ReferenceModal.tsx";
 import { SwingDetailScreen } from "./components/SwingDetailScreen.tsx";
 import { SwingJournal } from "./components/SwingJournal.tsx";
+import { SignIn, loadProfile, type UserProfile } from "./components/SignIn.tsx";
 import { TabBar, type Screen } from "./components/TabBar.tsx";
 import { useMediaPipe } from "./hooks/useMediaPipe.ts";
 import { useSwingAnalysis } from "./hooks/useSwingAnalysis.ts";
@@ -19,10 +20,15 @@ import { REFERENCE_LIBRARY, demoDashboard } from "./lib/demoData.ts";
 import { loadJournal, loadSessions, saveSession } from "./lib/sessionStore.ts";
 import type { JournalEntry, PhaseName, SessionRecord, SwingSequence } from "./types/pose.ts";
 
-const USER_NAME = "Sameen";
+/** Left-to-right order of the swipeable top-level pages. */
+const PAGE_ORDER: Screen[] = ["home", "journal", "studio", "progress"];
+/** A swipe only counts when it begins inside this margin (px) of an edge. */
+const EDGE_ZONE_PX = 32;
+const SWIPE_MIN_PX = 56;
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>("home");
+  const [profile, setProfile] = useState<UserProfile | null>(() => loadProfile());
   const [openPhase, setOpenPhase] = useState<PhaseName | null>(null);
   const [uploadMenu, setUploadMenu] = useState(false);
   const [refModal, setRefModal] = useState(false);
@@ -97,7 +103,7 @@ export default function App() {
   const onPickFile = useCallback(
     async (file: File) => {
       const target = uploadTargetRef.current;
-      const seq = await mediapipe.extract(file, "left");
+      const seq = await mediapipe.extract(file, profile?.leadSide ?? "left");
       if (!seq) return;
       if (target === "reference") {
         swing.setReference(seq, file.name.replace(/\.[^.]+$/, ""), makeVideo(file));
@@ -109,7 +115,7 @@ export default function App() {
       }
       setScreen("detail");
     },
-    [mediapipe, swing, makeVideo],
+    [mediapipe, swing, makeVideo, profile],
   );
 
   const startUpload = useCallback((target: "user" | "reference" | "dtl") => {
@@ -140,14 +146,46 @@ export default function App() {
     [swing],
   );
 
+  // Edge-swipe page navigation. The gesture must START within EDGE_ZONE_PX of
+  // a screen edge, which keeps it clear of the canvas scrub/telestrator drags
+  // that own the middle of the player.
+  const swipeRef = useRef<{ x: number; y: number } | null>(null);
+  const onSwipeStart = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
+    if (screen === "detail") return; // player owns its own horizontal drags
+    const w = e.currentTarget.clientWidth || window.innerWidth;
+    const x = e.clientX - e.currentTarget.getBoundingClientRect().left;
+    if (x > EDGE_ZONE_PX && x < w - EDGE_ZONE_PX) return;
+    swipeRef.current = { x: e.clientX, y: e.clientY };
+  }, [screen]);
+  const onSwipeEnd = useCallback(
+    (e: ReactPointerEvent<HTMLDivElement>) => {
+      const start = swipeRef.current;
+      swipeRef.current = null;
+      if (!start) return;
+      const dx = e.clientX - start.x;
+      const dy = e.clientY - start.y;
+      if (Math.abs(dx) < SWIPE_MIN_PX || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+      const i = PAGE_ORDER.indexOf(screen);
+      if (i === -1) return;
+      const next = PAGE_ORDER[dx < 0 ? i + 1 : i - 1];
+      if (next) setScreen(next);
+    },
+    [screen],
+  );
+
   const busy =
     mediapipe.status.state === "loading-model" || mediapipe.status.state === "extracting";
 
   return (
-    <div className="phone">
+    <div
+      className="phone"
+      onPointerDown={onSwipeStart}
+      onPointerUp={onSwipeEnd}
+      onPointerCancel={() => (swipeRef.current = null)}
+    >
       {screen === "home" && (
         <HomeScreen
-          userName={USER_NAME}
+          userName={profile?.name ?? "Golfer"}
           dashboard={dashboard}
           analysis={swing.analysis}
           sessions={sessions}
@@ -166,7 +204,7 @@ export default function App() {
           video={swing.video}
           referenceVideo={swing.referenceVideo}
           initialPhase={openPhase}
-          playerName={USER_NAME}
+          playerName={profile?.name ?? "Golfer"}
           dtl={dtlSwing}
           dtlVideo={dtlVideo}
           onBack={() => setScreen("home")}
@@ -294,6 +332,8 @@ export default function App() {
       />
 
       <TabBar screen={screen} busy={busy} onGo={setScreen} onUpload={() => setUploadMenu(true)} />
+
+      {!profile && <SignIn onDone={setProfile} />}
     </div>
   );
 }
