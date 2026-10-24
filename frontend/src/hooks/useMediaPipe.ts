@@ -30,6 +30,8 @@ const GPU_INIT_TIMEOUT_MS = 15_000;
 const MODEL_LOAD_TIMEOUT_MS = 180_000;
 /** Ceiling on one video seek; iOS sometimes never fires "seeked". */
 const SEEK_TIMEOUT_MS = 15_000;
+/** Ceiling on getting the clip decodable at all. */
+const VIDEO_READY_TIMEOUT_MS = 30_000;
 
 export type MediaPipeStatus =
   | { state: "idle" }
@@ -196,18 +198,61 @@ export function useMediaPipe(): UseMediaPipe {
       leadSide: "left" | "right" = "left",
     ): Promise<SwingSequence | null> => {
       cancelledRef.current = false;
+      let cleanup: (() => void) | null = null;
       try {
         const landmarker = await loadLandmarker();
 
         const url = URL.createObjectURL(file);
         const video = document.createElement("video");
-        video.src = url;
         video.muted = true;
         video.playsInline = true;
-        await new Promise<void>((resolve, reject) => {
-          video.onloadedmetadata = () => resolve();
-          video.onerror = () => reject(new Error("could not decode video"));
-        });
+        video.preload = "auto";
+        /*
+         * iOS refuses to decode a <video> that is not in the document, and
+         * treats display:none as not renderable, so the element has to be
+         * present and merely invisible.
+         */
+        video.setAttribute("aria-hidden", "true");
+        video.style.cssText =
+          "position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;pointer-events:none;";
+        document.body.appendChild(video);
+        video.src = url;
+        cleanup = () => {
+          video.pause();
+          video.removeAttribute("src");
+          video.load();
+          video.remove();
+          URL.revokeObjectURL(url);
+        };
+        video.load();
+
+        // Metadata alone is not enough to seek against: wait for actual frame
+        // data (HAVE_CURRENT_DATA) before touching currentTime.
+        await withTimeout(
+          new Promise<void>((resolve, reject) => {
+            if (video.readyState >= 2) {
+              resolve();
+              return;
+            }
+            video.addEventListener("loadeddata", () => resolve(), { once: true });
+            video.addEventListener(
+              "error",
+              () => reject(new Error("could not decode video")),
+              { once: true },
+            );
+          }),
+          VIDEO_READY_TIMEOUT_MS,
+          "could not read that video — try re-saving or trimming it",
+        );
+
+        // Priming the decoder with a muted play/pause makes seeking reliable
+        // on mobile Safari. Refusal is harmless, so the failure is ignored.
+        try {
+          await video.play();
+          video.pause();
+        } catch {
+          // autoplay blocked — seeking generally still works
+        }
 
         const duration = video.duration;
         if (!Number.isFinite(duration) || duration <= 0) {
@@ -219,24 +264,56 @@ export function useMediaPipe(): UseMediaPipe {
 
         const seekTo = (t: number) =>
           new Promise<void>((resolve, reject) => {
-            // iOS Safari intermittently drops "seeked" on long or
-            // high-bitrate clips, which used to strand the loop below.
-            let guard: ReturnType<typeof setTimeout> | undefined;
-            const onSeek = () => {
-              clearTimeout(guard);
-              video.removeEventListener("seeked", onSeek);
+            const target = Math.min(t, Math.max(duration - 1e-3, 0));
+            /*
+             * Assigning the time the clip is already parked at is a no-op, and
+             * Safari fires no "seeked" for a seek it never performed. The loop
+             * below starts at t=0 on a video already at 0, so it sat waiting
+             * for an event that was never coming. Chrome happens to fire one
+             * anyway, which is why this only ever failed on a phone.
+             */
+            if (
+              video.readyState >= 2 &&
+              Math.abs(video.currentTime - target) < step / 2
+            ) {
               resolve();
-            };
-            guard = setTimeout(() => {
-              video.removeEventListener("seeked", onSeek);
-              reject(new Error("timed out reading the video — try a shorter clip"));
-            }, SEEK_TIMEOUT_MS);
-            video.addEventListener("seeked", onSeek);
-            video.onerror = () => {
+              return;
+            }
+
+            let guard: ReturnType<typeof setTimeout> | undefined;
+            let poll: ReturnType<typeof setInterval> | undefined;
+            const finish = (err?: Error) => {
               clearTimeout(guard);
-              reject(new Error("seek failed"));
+              if (poll !== undefined) clearInterval(poll);
+              video.removeEventListener("seeked", onSeek);
+              video.removeEventListener("error", onError);
+              if (err) reject(err);
+              else resolve();
             };
-            video.currentTime = Math.min(t, Math.max(duration - 1e-3, 0));
+            const onSeek = () => finish();
+            const onError = () => finish(new Error("seek failed"));
+
+            video.addEventListener("seeked", onSeek);
+            video.addEventListener("error", onError);
+            // Safari also drops "seeked" outright on some clips, so watching
+            // the clock settle is the backstop.
+            poll = setInterval(() => {
+              if (
+                !video.seeking &&
+                video.readyState >= 2 &&
+                Math.abs(video.currentTime - target) < step
+              ) {
+                finish();
+              }
+            }, 60);
+            guard = setTimeout(
+              () =>
+                finish(
+                  new Error("timed out reading the video — try a shorter clip"),
+                ),
+              SEEK_TIMEOUT_MS,
+            );
+            video.currentTime = target;
           });
 
         // jump the shared clock forward so this extraction's timestamps can
@@ -266,7 +343,8 @@ export function useMediaPipe(): UseMediaPipe {
           }
         }
 
-        URL.revokeObjectURL(url);
+        cleanup();
+        cleanup = null;
         if (cancelledRef.current || frames.length < 10) {
           setStatus({
             state: "error",
@@ -280,6 +358,7 @@ export function useMediaPipe(): UseMediaPipe {
         setStatus({ state: "done", frames: frames.length });
         return { fps: EXTRACT_FPS, leadSide, frames };
       } catch (err) {
+        cleanup?.();
         // MediaPipe sometimes throws raw strings/objects rather than Errors —
         // surface whatever detail exists instead of a generic message.
         const message =
