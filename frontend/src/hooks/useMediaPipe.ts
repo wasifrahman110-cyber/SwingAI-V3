@@ -18,9 +18,22 @@ const MODEL_URL =
 /** Sampling rate for extraction: every video frame at this fps. */
 const EXTRACT_FPS = 30;
 
+/** Where the downloaded .task model is kept between visits. */
+const MODEL_CACHE = "swingai-pose-model-v1";
+/**
+ * How long to let the GPU delegate initialise before falling back to CPU.
+ * Mobile Safari can leave that call pending indefinitely rather than
+ * rejecting, so the fallback cannot rely on catching a thrown error alone.
+ */
+const GPU_INIT_TIMEOUT_MS = 15_000;
+/** Ceiling on the whole load so a stalled network surfaces instead of hanging. */
+const MODEL_LOAD_TIMEOUT_MS = 180_000;
+/** Ceiling on one video seek; iOS sometimes never fires "seeked". */
+const SEEK_TIMEOUT_MS = 15_000;
+
 export type MediaPipeStatus =
   | { state: "idle" }
-  | { state: "loading-model" }
+  | { state: "loading-model"; progress: number | null }
   | { state: "extracting"; progress: number }
   | { state: "done"; frames: number }
   | { state: "error"; message: string };
@@ -40,6 +53,85 @@ export interface UseMediaPipe {
   cancel: () => void;
 }
 
+/** Reject with `message` if `work` has not settled within `ms`. */
+function withTimeout<T>(work: Promise<T>, ms: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms);
+    work.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err: unknown) => {
+        clearTimeout(timer);
+        reject(err instanceof Error ? err : new Error(String(err)));
+      },
+    );
+  });
+}
+
+/**
+ * Fetch the model ourselves instead of handing MediaPipe a URL.
+ *
+ * The runtime and the model together are a ~15 MB cold download, which on a
+ * phone over mobile data can take a minute or more. Streaming it here gives
+ * the UI a real percentage instead of a static label that is indistinguishable
+ * from a dead connection, and keeping the bytes in the Cache API makes every
+ * later visit instant. Degrades to a plain buffered read wherever streaming or
+ * Cache Storage is missing (older Safari, private browsing).
+ */
+async function loadModelBytes(
+  onProgress: (fraction: number) => void,
+): Promise<Uint8Array> {
+  try {
+    const cached = await (await caches.open(MODEL_CACHE)).match(MODEL_URL);
+    if (cached) {
+      onProgress(1);
+      return new Uint8Array(await cached.arrayBuffer());
+    }
+  } catch {
+    // Cache Storage unavailable — download directly.
+  }
+
+  const resp = await fetch(MODEL_URL);
+  if (!resp.ok) throw new Error(`pose model download failed (HTTP ${resp.status})`);
+
+  const total = Number(resp.headers.get("content-length")) || 0;
+  const reader = resp.body?.getReader();
+
+  let bytes: Uint8Array;
+  if (!reader) {
+    bytes = new Uint8Array(await resp.arrayBuffer());
+  } else {
+    const chunks: Uint8Array[] = [];
+    let received = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      chunks.push(value);
+      received += value.length;
+      if (total > 0) onProgress(received / total);
+    }
+    bytes = new Uint8Array(received);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.length;
+    }
+  }
+
+  try {
+    await (await caches.open(MODEL_CACHE)).put(
+      MODEL_URL,
+      new Response(bytes.buffer as ArrayBuffer),
+    );
+  } catch {
+    // Not cacheable here; this visit still has the bytes.
+  }
+  return bytes;
+}
+
 export function useMediaPipe(): UseMediaPipe {
   const [status, setStatus] = useState<MediaPipeStatus>({ state: "idle" });
   const landmarkerRef = useRef<PoseLandmarkerLike | null>(null);
@@ -55,27 +147,45 @@ export function useMediaPipe(): UseMediaPipe {
 
   const loadLandmarker = useCallback(async (): Promise<PoseLandmarkerLike> => {
     if (landmarkerRef.current) return landmarkerRef.current;
-    setStatus({ state: "loading-model" });
-    const { FilesetResolver, PoseLandmarker } = await import(
-      "@mediapipe/tasks-vision"
+    setStatus({ state: "loading-model", progress: null });
+
+    const load = (async (): Promise<PoseLandmarkerLike> => {
+      const { FilesetResolver, PoseLandmarker } = await import(
+        "@mediapipe/tasks-vision"
+      );
+      const fileset = await FilesetResolver.forVisionTasks(WASM_BASE);
+      const modelBytes = await loadModelBytes((fraction) =>
+        setStatus({ state: "loading-model", progress: Math.min(1, fraction) }),
+      );
+      const make = (delegate: "GPU" | "CPU") =>
+        PoseLandmarker.createFromOptions(fileset, {
+          // a fresh view each attempt: the underlying buffer may be
+          // transferred into the worker by the first call
+          baseOptions: { modelAssetBuffer: new Uint8Array(modelBytes), delegate },
+          runningMode: "VIDEO",
+          numPoses: 1,
+          minPoseDetectionConfidence: 0.5,
+          minPosePresenceConfidence: 0.5,
+          minTrackingConfidence: 0.5,
+        });
+      try {
+        return (await withTimeout(
+          make("GPU"),
+          GPU_INIT_TIMEOUT_MS,
+          "gpu delegate did not initialise",
+        )) as unknown as PoseLandmarkerLike;
+      } catch {
+        // No usable WebGL context, or initialisation stalled (headless
+        // browsers, some VMs, mobile Safari) — CPU inference.
+        return (await make("CPU")) as unknown as PoseLandmarkerLike;
+      }
+    })();
+
+    const landmarker = await withTimeout(
+      load,
+      MODEL_LOAD_TIMEOUT_MS,
+      "Pose model did not finish loading. Check your connection and try again.",
     );
-    const fileset = await FilesetResolver.forVisionTasks(WASM_BASE);
-    const make = (delegate: "GPU" | "CPU") =>
-      PoseLandmarker.createFromOptions(fileset, {
-        baseOptions: { modelAssetPath: MODEL_URL, delegate },
-        runningMode: "VIDEO",
-        numPoses: 1,
-        minPoseDetectionConfidence: 0.5,
-        minPosePresenceConfidence: 0.5,
-        minTrackingConfidence: 0.5,
-      });
-    let landmarker: PoseLandmarkerLike;
-    try {
-      landmarker = (await make("GPU")) as unknown as PoseLandmarkerLike;
-    } catch {
-      // No usable WebGL context (headless browsers, some VMs) — CPU inference.
-      landmarker = (await make("CPU")) as unknown as PoseLandmarkerLike;
-    }
     landmarkerRef.current = landmarker;
     return landmarker;
   }, []);
@@ -109,12 +219,23 @@ export function useMediaPipe(): UseMediaPipe {
 
         const seekTo = (t: number) =>
           new Promise<void>((resolve, reject) => {
+            // iOS Safari intermittently drops "seeked" on long or
+            // high-bitrate clips, which used to strand the loop below.
+            let guard: ReturnType<typeof setTimeout> | undefined;
             const onSeek = () => {
+              clearTimeout(guard);
               video.removeEventListener("seeked", onSeek);
               resolve();
             };
+            guard = setTimeout(() => {
+              video.removeEventListener("seeked", onSeek);
+              reject(new Error("timed out reading the video — try a shorter clip"));
+            }, SEEK_TIMEOUT_MS);
             video.addEventListener("seeked", onSeek);
-            video.onerror = () => reject(new Error("seek failed"));
+            video.onerror = () => {
+              clearTimeout(guard);
+              reject(new Error("seek failed"));
+            };
             video.currentTime = Math.min(t, Math.max(duration - 1e-3, 0));
           });
 

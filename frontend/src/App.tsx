@@ -239,7 +239,9 @@ export default function App() {
         <div className="sheet-backdrop" style={{ display: "grid", placeItems: "center" }}>
           <div className="loading-shimmer" style={{ padding: 0 }}>
             {mediapipe.status.state === "loading-model"
-              ? "LOADING POSE MODEL…"
+              ? mediapipe.status.progress === null
+                ? "LOADING POSE MODEL…"
+                : `LOADING POSE MODEL ${Math.round(mediapipe.status.progress * 100)}%`
               : `EXTRACTING POSE ${Math.round(
                   (mediapipe.status.state === "extracting" ? mediapipe.status.progress : 0) * 100,
                 )}%`}
