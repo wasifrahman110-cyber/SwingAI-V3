@@ -5,7 +5,7 @@
  * reference swing, localStorage session persistence.
  */
 
-import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { DrillStudio } from "./components/DrillStudio.tsx";
 import { HomeScreen } from "./components/HomeScreen.tsx";
 import { ProgressScreen } from "./components/ProgressScreen.tsx";
@@ -17,7 +17,8 @@ import { Walkthrough, tourSeen } from "./components/Walkthrough.tsx";
 import { TabBar, type Screen } from "./components/TabBar.tsx";
 import { useMediaPipe } from "./hooks/useMediaPipe.ts";
 import { useSwingAnalysis } from "./hooks/useSwingAnalysis.ts";
-import { REFERENCE_LIBRARY, demoDashboard } from "./lib/demoData.ts";
+import { REFERENCE_LIBRARY } from "./lib/demoData.ts";
+import { buildDashboard } from "./lib/dashboard.ts";
 import { prettyClipName } from "./lib/clipName.ts";
 import { loadJournal, loadSessions, saveSession } from "./lib/sessionStore.ts";
 import type { JournalEntry, PhaseName, SessionRecord, SwingSequence } from "./types/pose.ts";
@@ -41,10 +42,10 @@ export default function App() {
   const swing = useSwingAnalysis();
   const mediapipe = useMediaPipe();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const dashboard = useRef(demoDashboard()).current;
 
   const [sessions, setSessions] = useState<SessionRecord[]>(() => loadSessions());
   const [journal, setJournal] = useState<JournalEntry[]>(() => loadJournal());
+  const dashboard = useMemo(() => buildDashboard(sessions), [sessions]);
 
   // Track every object URL we mint so they are revoked on unmount.
   const objectUrlsRef = useRef<string[]>([]);
@@ -187,10 +188,12 @@ export default function App() {
       onPointerCancel={() => (swipeRef.current = null)}
     >
       {screen === "home" && (
+        /* The seeded demo swing is a preview for the player, not this
+           golfer's own performance, so the dashboard must not report it. */
         <HomeScreen
           userName={profile?.name ?? "Golfer"}
           dashboard={dashboard}
-          analysis={swing.analysis}
+          analysis={swing.isDemo ? null : swing.analysis}
           sessions={sessions}
           onOpenSwing={goDetail}
         />

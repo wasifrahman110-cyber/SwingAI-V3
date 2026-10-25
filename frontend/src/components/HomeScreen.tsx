@@ -5,7 +5,7 @@
 
 import type { AnalysisResult, PhaseName, SessionRecord } from "../types/pose.ts";
 import { FaultTrendDashboard } from "./FaultTrendDashboard.tsx";
-import type { DashboardData } from "../lib/demoData.ts";
+import type { DashboardData } from "../lib/dashboard.ts";
 import { FrameworkScoreChart } from "./FrameworkScoreChart.tsx";
 import { HexMap } from "./HexMap.tsx";
 import { CheckBadge, ChevronUp, Target } from "./icons.tsx";
@@ -20,25 +20,10 @@ interface HomeScreenProps {
 
 export function HomeScreen({ userName, dashboard, analysis, sessions, onOpenSwing }: HomeScreenProps) {
   const idx = analysis?.swingIndex ?? dashboard.swingIndex;
+  const delta = dashboard.swingIndexDelta;
+  const hasTrend = dashboard.scoreSeries.length >= 2;
   return (
     <div className="screen">
-      <div className="statusbar">
-        <span>9:41</span>
-        <span className="glyphs" aria-hidden>
-          <svg width="17" height="11" viewBox="0 0 17 11" fill="currentColor">
-            <rect x="0" y="7" width="3" height="4" rx="0.8" />
-            <rect x="4.5" y="5" width="3" height="6" rx="0.8" />
-            <rect x="9" y="2.5" width="3" height="8.5" rx="0.8" />
-            <rect x="13.5" y="0" width="3" height="11" rx="0.8" />
-          </svg>
-          <svg width="22" height="11" viewBox="0 0 24 12" fill="none" stroke="currentColor">
-            <rect x="0.5" y="0.5" width="20" height="11" rx="3" strokeWidth="1" opacity="0.5" />
-            <rect x="2" y="2" width="15" height="8" rx="1.6" fill="currentColor" stroke="none" />
-            <path d="M22.5 4v4" strokeWidth="1.4" strokeLinecap="round" opacity="0.5" />
-          </svg>
-        </span>
-      </div>
-
       <header className="home-header">
         <div className="avatar">{userName.slice(0, 1).toUpperCase()}</div>
         <div className="greeting">
@@ -55,11 +40,12 @@ export function HomeScreen({ userName, dashboard, analysis, sessions, onOpenSwin
             <Target size={15} />
           </span>
           <span className="value">
-            {idx.toFixed(1)}
-            <span className={`delta-up ${dashboard.swingIndexDelta >= 0 ? "good" : ""}`}>
-              {dashboard.swingIndexDelta >= 0 ? "▲" : "▼"}{" "}
-              {Math.abs(dashboard.swingIndexDelta).toFixed(1)}
-            </span>
+            {idx === null ? "—" : idx.toFixed(1)}
+            {delta !== null && (
+              <span className={`delta-up ${delta >= 0 ? "good" : ""}`}>
+                {delta >= 0 ? "▲" : "▼"} {Math.abs(delta).toFixed(1)}
+              </span>
+            )}
           </span>
           <span className="label">
             Swing Index <span style={{ marginLeft: "auto" }}>›</span>
@@ -79,14 +65,24 @@ export function HomeScreen({ userName, dashboard, analysis, sessions, onOpenSwin
       <div className="chart-card">
         <div className="chart-head">
           <span className="title">Framework Score</span>
-          <span className="pill accent">goal {dashboard.goal.toFixed(1)}</span>
+          {hasTrend && <span className="pill accent">goal {dashboard.goal.toFixed(1)}</span>}
         </div>
-        <FrameworkScoreChart
-          series={dashboard.scoreSeries}
-          goal={dashboard.goal}
-          dayLabels={dashboard.dayLabels}
-        />
-        <div className="range">{dashboard.weekLabel}</div>
+        {hasTrend ? (
+          <>
+            <FrameworkScoreChart
+              series={dashboard.scoreSeries}
+              goal={dashboard.goal}
+              dayLabels={dashboard.dayLabels}
+            />
+            <div className="range">{dashboard.weekLabel}</div>
+          </>
+        ) : (
+          <div className="empty-note" style={{ padding: "18px 10px" }}>
+            {dashboard.analyzedCount === 0
+              ? "Analyze your first swing and your score trend starts here."
+              : "One more swing and your score trend appears here."}
+          </div>
+        )}
       </div>
 
       <div className="hex-card">

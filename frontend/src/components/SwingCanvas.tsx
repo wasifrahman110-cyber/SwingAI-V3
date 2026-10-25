@@ -243,30 +243,94 @@ function drawSkeleton(
   ctx.restore();
 }
 
-/** Anchor the reference ghost onto the user's body (pelvis + torso scale). */
-function ghostTransform(userF: PoseFrame, refF: PoseFrame, pane: Pane) {
-  const mid = (f: PoseFrame, a: number, b: number): Pt => {
-    const la = f[a];
-    const lb = f[b];
-    if (!la || !lb) return { x: 0.5, y: 0.5 };
-    return { x: (la.x + lb.x) / 2, y: (la.y + lb.y) / 2 };
+/** Placement of the reference ghost inside the user's frame. */
+interface GhostFit {
+  /** User pelvis at address, in normalized frame coordinates. */
+  readonly ax: number;
+  readonly ay: number;
+  /** Reference pelvis at address, the point the ghost pivots about. */
+  readonly rx: number;
+  readonly ry: number;
+  readonly scale: number;
+}
+
+function midpoint(f: PoseFrame, a: number, b: number): Pt | null {
+  const la = f[a];
+  const lb = f[b];
+  // No silent centre-of-frame fallback: a missing hip used to teleport the
+  // whole ghost to the middle of the video for that frame.
+  if (!la || !lb) return null;
+  return { x: (la.x + lb.x) / 2, y: (la.y + lb.y) / 2 };
+}
+
+/** Projected pelvis-to-shoulder length, or null where either end is missing. */
+function torsoLength(f: PoseFrame): number | null {
+  const pelvis = midpoint(f, LM.LEFT_HIP, LM.RIGHT_HIP);
+  const shoulder = midpoint(f, LM.LEFT_SHOULDER, LM.RIGHT_SHOULDER);
+  if (!pelvis || !shoulder) return null;
+  const d = Math.hypot(pelvis.x - shoulder.x, pelvis.y - shoulder.y);
+  return d > 1e-4 ? d : null;
+}
+
+function medianTorso(frames: readonly PoseFrame[]): number | null {
+  const lengths = frames
+    .map(torsoLength)
+    .filter((v): v is number => v !== null)
+    .sort((a, b) => a - b);
+  return lengths.length === 0 ? null : (lengths[lengths.length >> 1] ?? null);
+}
+
+/**
+ * Fit the reference skeleton into the user's frame once, from both swings'
+ * address posture and their median torso length.
+ *
+ * This was previously recomputed on every rendered frame against the live
+ * pose, which cost two things the eye picks up immediately. The ghost's
+ * pelvis was re-pinned to the user's pelvis on every tick, so it inherited
+ * the user's own tracking jitter and could never show a difference in hip
+ * movement — the one thing an overlay is for. And the scale came from the
+ * instantaneous projected torso, which foreshortens as the golfer turns, so
+ * the ghost swelled and shrank through the swing. Fixing the fit up front
+ * lets the reference play back as the swing it actually is.
+ */
+function computeGhostFit(
+  user: SwingSequence,
+  reference: SwingSequence,
+  userSetup: number,
+  refSetup: number,
+): GhostFit | null {
+  const at = (s: SwingSequence, i: number) =>
+    s.frames[Math.max(0, Math.min(s.frames.length - 1, Math.round(i)))];
+  const uf = at(user, userSetup);
+  const rf = at(reference, refSetup);
+  if (!uf || !rf) return null;
+  const uPelvis = midpoint(uf, LM.LEFT_HIP, LM.RIGHT_HIP);
+  const rPelvis = midpoint(rf, LM.LEFT_HIP, LM.RIGHT_HIP);
+  if (!uPelvis || !rPelvis) return null;
+  const uTorso = medianTorso(user.frames);
+  const rTorso = medianTorso(reference.frames);
+  if (uTorso === null || rTorso === null) return null;
+  // A ratio this far out means one of the clips is badly tracked; clamping
+  // keeps the ghost on screen instead of flinging it out of the frame.
+  const scale = Math.min(3, Math.max(1 / 3, uTorso / rTorso));
+  return { ax: uPelvis.x, ay: uPelvis.y, rx: rPelvis.x, ry: rPelvis.y, scale };
+}
+
+function ghostPoint(fit: GhostFit, lm: { x: number; y: number }, pane: Pane): Pt {
+  return {
+    x: pane.x + (fit.ax + (lm.x - fit.rx) * fit.scale) * pane.w,
+    y: pane.y + (fit.ay + (lm.y - fit.ry) * fit.scale) * pane.h,
   };
-  const dist = (a: Pt, b: Pt) => Math.hypot(a.x - b.x, a.y - b.y) || 1e-6;
-  const uPelvis = mid(userF, LM.LEFT_HIP, LM.RIGHT_HIP);
-  const uSho = mid(userF, LM.LEFT_SHOULDER, LM.RIGHT_SHOULDER);
-  const rPelvis = mid(refF, LM.LEFT_HIP, LM.RIGHT_HIP);
-  const rSho = mid(refF, LM.LEFT_SHOULDER, LM.RIGHT_SHOULDER);
-  const s = dist(uPelvis, uSho) / dist(rPelvis, rSho);
-  // remap the reference frame into a shifted/scaled virtual pane so the
-  // regular skeleton drawing path can be reused untouched
-  return (lm: { x: number; y: number }): Pt => ({
-    x: pane.x + (uPelvis.x + (lm.x - rPelvis.x) * s) * pane.w,
-    y: pane.y + (uPelvis.y + (lm.y - rPelvis.y) * s) * pane.h,
-  });
 }
 
 export function SwingCanvas(props: SwingCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  /** Ghost placement is fixed per swing pair, so it is solved once and kept. */
+  const ghostFitRef = useRef<{
+    user: SwingSequence;
+    reference: SwingSequence;
+    fit: GhostFit | null;
+  } | null>(null);
   const propsRef = useRef(props);
   propsRef.current = props;
   const lastTickRef = useRef<number>(0);
@@ -335,8 +399,20 @@ export function SwingCanvas(props: SwingCanvasProps) {
           ? Math.max(0, Math.min(reference.frames.length - 1, Math.round(p.refFrameOverride)))
           : mappedReferenceFrame(analysis, fi, p.frameOffset, reference.frames.length);
       const refF = reference.frames[refFi];
-      if (p.ghostOn && refF) {
-        const xf = ghostTransform(userF, refF, userDraw);
+      const cached = ghostFitRef.current;
+      let fit: GhostFit | null;
+      if (cached && cached.user === p.user && cached.reference === reference) {
+        fit = cached.fit;
+      } else {
+        fit = computeGhostFit(
+          p.user,
+          reference,
+          analysis?.phases.user.setup ?? 0,
+          analysis?.phases.pro?.setup ?? 0,
+        );
+        ghostFitRef.current = { user: p.user, reference, fit };
+      }
+      if (p.ghostOn && refF && fit) {
         ctx.save();
         // Clip to the pane: the ghost is scaled from the reference skeleton and
         // can otherwise extend past the frame edges in split view.
@@ -351,8 +427,8 @@ export function SwingCanvas(props: SwingCanvasProps) {
           const la = refF[a];
           const lb = refF[b];
           if (!la || !lb) continue;
-          const pa = xf(la);
-          const pb = xf(lb);
+          const pa = ghostPoint(fit, la, userDraw);
+          const pb = ghostPoint(fit, lb, userDraw);
           ctx.beginPath();
           ctx.moveTo(pa.x, pa.y);
           ctx.lineTo(pb.x, pb.y);

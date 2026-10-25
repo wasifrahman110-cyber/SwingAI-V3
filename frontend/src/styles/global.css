@@ -91,26 +91,13 @@ button {
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: none;
-  padding-bottom: 96px;
+  /* the page used to clear the notch only because a mock status bar sat at
+     the top of it; with that gone the real inset has to do the job */
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px));
 }
 .screen::-webkit-scrollbar {
   display: none;
-}
-
-/* ---------- status bar ---------- */
-.statusbar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 14px 24px 6px;
-  font-size: 15px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-}
-.statusbar .glyphs {
-  display: flex;
-  gap: 5px;
-  align-items: center;
 }
 
 /* ---------- home header ---------- */

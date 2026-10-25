@@ -218,25 +218,4 @@ export const REFERENCE_LIBRARY: readonly ReferenceClip[] = [
   },
 ] as const;
 
-// Dashboard demo telemetry (Home screen)
-export interface DashboardData {
-  readonly swingIndex: number;
-  readonly swingIndexDelta: number;
-  readonly analyzedCount: number;
-  readonly weekLabel: string;
-  readonly scoreSeries: readonly number[];
-  readonly goal: number;
-  readonly dayLabels: readonly string[];
-}
-
-export function demoDashboard(): DashboardData {
-  return {
-    swingIndex: 5.0,
-    swingIndexDelta: 0.4,
-    analyzedCount: 340,
-    weekLabel: "Jul 13 – 19, 2026",
-    scoreSeries: [4.1, 4.4, 4.2, 4.7, 4.6, 5.0, 4.9],
-    goal: 6.0,
-    dayLabels: ["07/13", "07/14", "07/15", "07/16", "07/17", "07/18", "07/19"],
-  };
-}
+// The home-screen figures are derived from stored sessions; see lib/dashboard.ts.
